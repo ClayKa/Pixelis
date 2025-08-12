@@ -1,0 +1,120 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Conda
+conda-meta/
+*.conda
+*.tar.bz2
+
+# PyTorch
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+checkpoints/
+models/
+weights/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+runs/
+wandb/
+tensorboard/
+mlflow/
+mlruns/
+
+# Data
+data/
+datasets/
+*.parquet
+*.json
+*.jsonl
+*.csv
+*.tsv
+
+# Model outputs
+outputs/
+results/
+generations/
+evaluations/
+
+# Temporary files
+tmp/
+temp/
+cache/
+.cache/
+
+# Environment files
+.env
+.env.local
+environment.yml.lock
+
+# Hugging Face
+.huggingface/
+hub/
+
+# Ray
+ray_results/
+ray_session*/
+
+# Documentation build
+docs/_build/
+docs/build/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Custom
+*.bak
+*.orig
+scratch/
+experiments/
+debug/
