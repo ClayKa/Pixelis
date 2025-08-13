@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import sys
+import yaml
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -27,81 +28,166 @@ from core.reproducibility import (
 from core.config_schema import PixelisConfig as TrainingConfig
 from core.utils.logging_utils import setup_logging, get_logger
 
+# Import SFT training module
+try:
+    from train_sft import (
+        CurriculumDataset,
+        CurriculumManager,
+        CurriculumCallback,
+        load_model_with_lora,
+        run_sft_training,
+    )
+except ImportError:
+    # If running from different directory
+    from scripts.train_sft import (
+        CurriculumDataset,
+        CurriculumManager,
+        CurriculumCallback,
+        load_model_with_lora,
+        run_sft_training,
+    )
+
 # Setup logging
 setup_logging()
 logger = get_logger(__name__)
 
 
 @track_artifacts(inputs=["dataset"], outputs=["model", "metrics"])
-def run_sft(config: TrainingConfig, artifact_manager: ArtifactManager):
+def run_sft(config: Dict[str, Any], artifact_manager: ArtifactManager):
     """
-    Run Supervised Fine-Tuning (SFT) with artifact tracking.
+    Run Supervised Fine-Tuning (SFT) with curriculum learning and artifact tracking.
     
     Args:
-        config: Training configuration
+        config: Training configuration dictionary
         artifact_manager: Artifact manager instance
     
     Returns:
         Tuple of (model_path, metrics)
     """
-    logger.info("Starting SFT training...")
+    logger.info("Starting SFT training with curriculum learning...")
     
-    # Load dataset artifact
-    dataset_artifact = artifact_manager.use_artifact(
-        name=config.dataset.artifact_name,
-        version=config.dataset.artifact_version,
-    )
-    logger.info(f"Using dataset: {dataset_artifact.name}:{dataset_artifact.version}")
+    # Load configuration from files if needed
+    if isinstance(config, TrainingConfig):
+        # Convert to dictionary if it's a dataclass
+        config_dict = config.to_dict() if hasattr(config, 'to_dict') else vars(config)
+    else:
+        config_dict = config
     
-    # TODO: Implement actual SFT training logic
-    # This is a placeholder implementation
+    # Ensure we have both training and model configs
+    if "model" not in config_dict:
+        # Load model configuration
+        model_config_path = Path("configs/model_arch.yaml")
+        if model_config_path.exists():
+            with open(model_config_path, 'r') as f:
+                model_config = yaml.safe_load(f)
+                config_dict.update(model_config)
     
-    # Simulate training
-    import time
-    import random
+    # Load curriculum configuration if not present
+    if "curriculum" not in config_dict:
+        training_params_path = Path("configs/training_params.yaml")
+        if training_params_path.exists():
+            with open(training_params_path, 'r') as f:
+                training_params = yaml.safe_load(f)
+                config_dict.update(training_params)
     
-    metrics = {}
-    for epoch in range(config.training.num_epochs):
-        # Simulate epoch
-        time.sleep(0.1)  # Simulate training time
-        
-        epoch_metrics = {
-            "epoch": epoch + 1,
-            "loss": random.uniform(0.5, 2.0) * (1 - epoch / config.training.num_epochs),
-            "learning_rate": config.training.learning_rate * (0.9 ** epoch),
-        }
-        
-        # Log metrics
-        artifact_manager.log_artifact(
-            name=f"sft_metrics_epoch_{epoch + 1}",
-            type=ArtifactType.METRICS,
-            data=epoch_metrics,
-            parent_artifacts=[f"{dataset_artifact.name}:{dataset_artifact.version}"],
+    # Initialize wandb if configured
+    import wandb
+    if wandb.run is None and "wandb" in config_dict.get("training", {}).get("report_to", []):
+        wandb.init(
+            project="pixelis-sft",
+            name=f"sft_curriculum_{wandb.util.generate_id()}",
+            config=config_dict,
+            tags=["sft", "curriculum"],
         )
-        
-        metrics[f"epoch_{epoch + 1}"] = epoch_metrics
-        logger.info(f"Epoch {epoch + 1}: loss={epoch_metrics['loss']:.4f}")
     
-    # Save model checkpoint
-    model_path = Path("checkpoints") / "sft_model.pt"
-    model_path.parent.mkdir(parents=True, exist_ok=True)
+    # Load model and tokenizer with LoRA
+    logger.info("Loading model with LoRA configuration...")
+    model, tokenizer = load_model_with_lora(config_dict)
     
-    # Simulate saving model
-    with open(model_path, "w") as f:
-        f.write("# Placeholder model file\n")
+    # Log model configuration
+    if artifact_manager:
+        artifact_manager.log_artifact(
+            name="sft_model_config",
+            type=ArtifactType.CONFIG,
+            data={
+                "model_name": config_dict.get("model", {}).get("model_name"),
+                "lora_config": config_dict.get("model", {}).get("lora_target_modules"),
+                "gradient_checkpointing": config_dict.get("model", {}).get("gradient_checkpointing"),
+            },
+        )
     
-    # Log final model
-    model_artifact = artifact_manager.log_large_artifact(
-        name="sft_model_final",
-        file_path=model_path,
-        type=ArtifactType.MODEL,
-        metadata={
-            "training_config": config.to_dict(),
-            "final_metrics": metrics[f"epoch_{config.training.num_epochs}"],
-        },
+    # Create curriculum dataset
+    curriculum_config = config_dict.get("curriculum", {})
+    data_path = curriculum_config.get("data_path", "data/processed/curriculum")
+    
+    logger.info(f"Loading curriculum dataset from {data_path}")
+    train_dataset = CurriculumDataset(
+        data_path=data_path,
+        tokenizer=tokenizer,
+        max_length=config_dict.get("model", {}).get("max_length", 4096),
+        use_split_files=curriculum_config.get("use_split_files", True),
+        initial_stage="simple"
     )
     
-    logger.info(f"✓ SFT training complete. Model saved: {model_artifact.name}:{model_artifact.version}")
+    # Log dataset statistics
+    dataset_stats = train_dataset.get_statistics()
+    logger.info(f"Dataset statistics: {dataset_stats}")
+    
+    if artifact_manager:
+        artifact_manager.log_artifact(
+            name="sft_dataset_stats",
+            type=ArtifactType.METRICS,
+            data=dataset_stats,
+        )
+    
+    # Set output directory
+    output_dir = config_dict.get("training", {}).get("output_dir", "./outputs/sft")
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    
+    # Check for resume checkpoint
+    resume_from = config_dict.get("training", {}).get("resume_from_checkpoint")
+    
+    # Run training with curriculum learning
+    logger.info("Starting curriculum-based SFT training...")
+    model, metrics = run_sft_training(
+        config=config_dict,
+        model=model,
+        tokenizer=tokenizer,
+        train_dataset=train_dataset,
+        eval_dataset=None,  # Could load a separate eval dataset here
+        output_dir=output_dir,
+        resume_from_checkpoint=resume_from
+    )
+    
+    # Save final model path
+    model_path = Path(output_dir) / "pytorch_model.bin"
+    
+    # Log final model artifact
+    if artifact_manager:
+        model_artifact = artifact_manager.log_large_artifact(
+            name="sft_model_final",
+            file_path=model_path,
+            type=ArtifactType.MODEL,
+            metadata={
+                "training_config": config_dict,
+                "final_metrics": metrics,
+                "curriculum_stats": train_dataset.get_statistics(),
+            },
+        )
+        logger.info(f"✓ Model artifact logged: {model_artifact.name}:{model_artifact.version}")
+    
+    # Save training summary
+    summary_path = Path(output_dir) / "training_summary.json"
+    with open(summary_path, 'w') as f:
+        json.dump({
+            "config": config_dict,
+            "metrics": metrics,
+            "dataset_stats": dataset_stats,
+            "model_path": str(model_path),
+        }, f, indent=2)
+    
+    logger.info(f"✓ SFT training complete. Model saved to {model_path}")
+    logger.info(f"  Final metrics: {metrics}")
     
     return str(model_path), metrics
 
@@ -372,8 +458,24 @@ def main():
     # Load configuration
     logger.info(f"Loading configuration from {args.config}")
     
-    # For this example, we'll create a dummy config
-    # In production, this would load from the YAML file
+    # Load the actual configuration from YAML files
+    config_dict = {}
+    
+    # Load training parameters
+    if Path(args.config).exists():
+        with open(args.config, 'r') as f:
+            training_params = yaml.safe_load(f)
+            config_dict.update(training_params)
+    
+    # Load model architecture config
+    model_config_path = Path("configs/model_arch.yaml")
+    if model_config_path.exists():
+        with open(model_config_path, 'r') as f:
+            model_config = yaml.safe_load(f)
+            config_dict.update(model_config)
+    
+    # For compatibility with reproducibility framework, create a TrainingConfig instance
+    # but use the dictionary for actual training
     config = TrainingConfig()
     
     # Set offline mode
@@ -402,7 +504,8 @@ def main():
         
         # Run appropriate training mode
         if args.mode == "sft":
-            model_path, metrics = run_sft(config, ctx.artifact_manager)
+            # Pass dictionary config for SFT
+            model_path, metrics = run_sft(config_dict, ctx.artifact_manager)
         elif args.mode == "rft":
             model_path, metrics = run_rft(config, ctx.artifact_manager)
         elif args.mode == "ttrl":

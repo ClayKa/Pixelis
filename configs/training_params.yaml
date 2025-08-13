@@ -100,6 +100,66 @@ reward:
         curiosity: 0.3
         coherence: 0.2
 
+# Curriculum learning configuration for SFT
+curriculum:
+  # Enable curriculum learning
+  enabled: true
+  
+  # Difficulty progression
+  stages:
+    - name: "simple"
+      min_steps: 0
+      max_steps: 2000
+      difficulty_mix:
+        simple: 1.0
+        medium: 0.0
+        hard: 0.0
+    - name: "simple_medium"
+      min_steps: 2000
+      max_steps: 4000
+      difficulty_mix:
+        simple: 0.7
+        medium: 0.3
+        hard: 0.0
+    - name: "balanced"
+      min_steps: 4000
+      max_steps: 6000
+      difficulty_mix:
+        simple: 0.4
+        medium: 0.4
+        hard: 0.2
+    - name: "medium_hard"
+      min_steps: 6000
+      max_steps: 8000
+      difficulty_mix:
+        simple: 0.2
+        medium: 0.4
+        hard: 0.4
+    - name: "full"
+      min_steps: 8000
+      max_steps: null
+      difficulty_mix:
+        simple: 0.2
+        medium: 0.3
+        hard: 0.5
+  
+  # Advancement settings
+  advancement_interval: 500  # Steps between advancement checks
+  min_performance_for_advance: 0.6  # Minimum validation score to advance
+  
+  # Rollback settings
+  rollback_enabled: true
+  rollback_threshold: -0.05  # Performance drop threshold for rollback
+  rollback_cooldown: 1000  # Steps to wait after rollback before retry
+  rollback_factor: 2.0  # Multiply advancement interval after rollback
+  
+  # Performance tracking
+  performance_window: 3  # Number of evaluations to average for stability
+  
+  # Data paths
+  data_path: "data/processed/curriculum"
+  use_split_files: true  # Use separate files for each difficulty level
+
 # Online learning configuration
 online:
   # Confidence gating

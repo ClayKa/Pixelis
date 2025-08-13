@@ -1,0 +1,103 @@
+# Configuration for CoTA Data Preprocessing with Difficulty Scoring
+# This file defines parameters for calculating difficulty scores and 
+# categorizing samples for curriculum learning
+
+# Weights for composite difficulty score calculation
+# These weights determine the relative importance of each factor
+difficulty_weights:
+  trajectory_complexity: 0.30      # Length and structure of trajectory
+  operation_sophistication: 0.25   # Complexity of visual operations used
+  reasoning_depth: 0.20            # Ratio and quality of thinking steps
+  error_patterns: 0.15             # Self-corrections and repetitions
+  task_type: 0.10                  # Inherent difficulty of task type
+
+# Percentile-based categorization thresholds
+# Uses robust statistics to ensure balanced distribution
+categorization:
+  simple_percentile: 33    # Bottom 33% are "simple"
+  medium_percentile: 66    # Middle 33% are "medium"
+  min_difficulty: 0.1      # Minimum possible difficulty score
+  max_difficulty: 1.0      # Maximum possible difficulty score
+
+# Trajectory analysis parameters
+trajectory_limits:
+  min_length: 2                     # Minimum valid trajectory length
+  max_length: 15                    # Maximum before considered outlier
+  optimal_thinking_ratio_min: 0.2   # Minimum ratio of thinking steps
+  optimal_thinking_ratio_max: 0.6   # Maximum ratio before penalty
+
+# Curriculum learning progression settings
+curriculum:
+  initial_simple_ratio: 0.8   # Start with 80% simple samples
+  initial_medium_ratio: 0.2   # Start with 20% medium samples
+  progression_rate: 0.1       # Rate of difficulty increase per stage
+  
+  # Stage-based mixture (can override defaults)
+  stage_mixtures:
+    stage_0:  # Initial training
+      simple: 0.8
+      medium: 0.2
+      hard: 0.0
+    stage_1:  # Early training
+      simple: 0.5
+      medium: 0.4
+      hard: 0.1
+    stage_2:  # Middle training
+      simple: 0.3
+      medium: 0.5
+      hard: 0.2
+    stage_3:  # Advanced training
+      simple: 0.2
+      medium: 0.4
+      hard: 0.4
+    stage_4:  # Final training
+      simple: 0.1
+      medium: 0.3
+      hard: 0.6
+
+# Operation complexity scores
+# Higher scores indicate more sophisticated operations
+operation_complexity:
+  TRACK_OBJECT: 3.0         # Temporal reasoning
+  SEGMENT_OBJECT_AT: 3.0    # Spatial localization
+  GET_PROPERTIES: 2.0       # Object analysis
+  ZOOM_IN: 2.0             # Navigation
+  READ_TEXT: 1.0           # Text extraction
+  THINK: 0.5               # Reasoning step
+
+# Task type base difficulties
+# Inherent difficulty of different task types
+task_difficulties:
+  temporal_tracking: 1.0
+  geometric_comparison: 0.8
+  spatial_reasoning: 0.7
+  relationship_detection: 0.6
+  attribute_recognition: 0.5
+  object_counting: 0.4
+  text_extraction: 0.3
+
+# Sample type difficulty modifiers
+# Additional difficulty for special sample types
+sample_type_modifiers:
+  positive: 0.0              # No modifier for correct samples
+  outcome_negative: 0.1      # Wrong answer samples
+  trap_perceptual: 0.2      # Perceptual error traps
+  trap_logical: 0.25        # Logical error traps
+  self_correction: 0.15     # Self-correction trajectories
+
+# Output and validation settings
+output_format: json
+generate_statistics: true
+validate_distribution: true
+
+# Validation thresholds
+validation:
+  min_category_percentage: 0.25   # Minimum 25% samples per category
+  min_task_diversity: 3           # Minimum task types per category
+  outlier_iqr_multiplier: 1.5    # IQR multiplier for outlier detection
+
+# Logging and debugging
+logging:
+  level: INFO
+  show_warnings: true
+  save_debug_info: false
