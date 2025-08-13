@@ -1,0 +1,141 @@
+# Training Parameters Configuration
+# This file contains all hyperparameters for SFT/RFT training
+
+training:
+  # Training mode: sft, rft, or online
+  mode: "sft"
+  
+  # Basic training parameters
+  num_epochs: 3
+  batch_size: 4
+  gradient_accumulation_steps: 4
+  learning_rate: 5.0e-5
+  warmup_steps: 500
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  
+  # Optimizer configuration
+  optimizer: "adamw"
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_epsilon: 1.0e-8
+  
+  # Learning rate scheduler
+  scheduler: "cosine"
+  num_cycles: 0.5
+  
+  # Evaluation settings
+  eval_steps: 500
+  eval_batch_size: 8
+  evaluation_strategy: "steps"
+  save_steps: 1000
+  save_total_limit: 3
+  
+  # Logging configuration
+  logging_steps: 10
+  logging_first_step: true
+  report_to:
+    - "wandb"
+  
+  # Checkpointing
+  output_dir: "./outputs"
+  save_strategy: "steps"
+  resume_from_checkpoint: null
+  
+  # Mixed precision training
+  fp16: false
+  bf16: true
+  tf32: true
+  
+  # Distributed training
+  ddp_find_unused_parameters: false
+  fsdp: null
+  deepspeed: null
+  
+  # Random seed for reproducibility
+  seed: 42
+
+# Reward configuration for RFT
+reward:
+  # Reward component weights
+  task_reward_weight: 1.0
+  curiosity_reward_weight: 0.3
+  coherence_reward_weight: 0.2
+  
+  # Curiosity reward parameters
+  curiosity_beta: 0.2  # Forward model weight
+  curiosity_eta: 0.5   # Scaling factor
+  intrinsic_reward_scale: 0.1
+  
+  # Coherence reward parameters
+  coherence_threshold: 0.7
+  repetition_penalty: 0.5
+  trajectory_min_length: 2
+  
+  # Tool usage penalties
+  tool_misuse_penalty: -0.1
+  excessive_tool_use_threshold: 10
+  excessive_tool_use_penalty: -0.2
+  
+  # Reward normalization
+  normalize_rewards: true
+  reward_clip_value: 10.0
+  
+  # Reward curriculum
+  use_curriculum: true
+  curriculum_stages:
+    - step: 0
+      weights:
+        task: 1.0
+        curiosity: 0.0
+        coherence: 0.0
+    - step: 5000
+      weights:
+        task: 0.7
+        curiosity: 0.2
+        coherence: 0.1
+    - step: 10000
+      weights:
+        task: 0.5
+        curiosity: 0.3
+        coherence: 0.2
+
+# Online learning configuration
+online:
+  # Confidence gating
+  confidence_threshold: 0.7
+  min_confidence_for_update: 0.5
+  
+  # Learning rate adaptation
+  min_learning_rate: 1.0e-6
+  max_learning_rate: 1.0e-4
+  lr_adaptation_strategy: "proportional"
+  
+  # KL divergence constraints
+  kl_weight: 0.01
+  max_kl_divergence: 0.05
+  
+  # EMA model settings
+  use_ema: true
+  ema_decay: 0.999
+  ema_update_freq: 1
+  
+  # Experience buffer
+  buffer_size: 10000
+  k_neighbors: 5
+  similarity_metric: "cosine"
+  
+  # Voting configuration
+  voting_strategy: "weighted"
+  min_votes_required: 3
+  
+  # Update worker settings
+  update_queue_size: 100
+  update_batch_size: 1
+  update_frequency: 1
+  
+  # Safety mechanisms
+  gradient_clip_norm: 1.0
+  max_updates_per_minute: 60
+  enable_human_in_loop: false
+  hil_sample_rate: 0.1

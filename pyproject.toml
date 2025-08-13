@@ -1,0 +1,263 @@
+[tool.black]
+line-length = 100
+target-version = ['py310']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # Directories
+  \.git
+  | \.venv
+  | venv
+  | build
+  | dist
+  | reference
+  | saved_models
+  | checkpoints
+  | wandb
+  | logs
+)/
+'''
+
+[tool.ruff]
+# Enable all stable rules
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "ARG",  # flake8-unused-arguments
+    "SIM",  # flake8-simplify
+    "TCH",  # flake8-type-checking
+    "DTZ",  # flake8-datetimez
+    "RUF",  # Ruff-specific rules
+    "PT",   # flake8-pytest-style
+    "PIE",  # flake8-pie
+    "RET",  # flake8-return
+    "ERA",  # flake8-eradicate (commented code)
+    "PD",   # pandas-vet
+    "PGH",  # pygrep-hooks
+    "PL",   # pylint
+    "NPY",  # NumPy-specific rules
+]
+
+ignore = [
+    "E501",   # Line too long (handled by black)
+    "B008",   # Do not perform function calls in argument defaults
+    "C901",   # Too complex
+    "PLR0913", # Too many arguments
+    "PLR0912", # Too many branches
+    "PLR0915", # Too many statements
+]
+
+# Same as Black
+line-length = 100
+
+# Assume Python 3.10
+target-version = "py310"
+
+# Exclude directories
+exclude = [
+    ".git",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "reference",
+    "saved_models",
+    "checkpoints",
+    "wandb",
+    "logs",
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401", "F403"]  # Allow unused imports in __init__.py
+"tests/*" = ["S101", "ARG", "PLR2004"]  # Allow asserts and magic values in tests
+"scripts/*" = ["T201"]  # Allow print statements in scripts
+
+[tool.ruff.isort]
+known-first-party = ["core", "scripts", "tests"]
+combine-as-imports = true
+split-on-trailing-comma = true
+
+[tool.ruff.flake8-bugbear]
+extend-immutable-calls = ["torch.tensor", "torch.device"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_any_unimported = false
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+check_untyped_defs = true
+no_implicit_reexport = true
+strict_equality = true
+
+# Ignore missing imports for third-party libraries
+ignore_missing_imports = true
+
+# Exclude paths
+exclude = [
+    "reference/",
+    "saved_models/",
+    "checkpoints/",
+    "wandb/",
+    "logs/",
+    "build/",
+    "dist/",
+]
+
+# Per-module options
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "scripts.*"
+disallow_untyped_defs = false
+check_untyped_defs = true
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--ignore=reference/",
+    "--ignore=saved_models/",
+    "--ignore=checkpoints/",
+    "--cov=core",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-report=xml",
+    "--cov-fail-under=70",  # Minimum 70% coverage for core modules
+]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests",
+    "unit: marks tests as unit tests",
+    "gpu: marks tests that require GPU",
+]
+
+[tool.coverage.run]
+source = ["core"]
+branch = true
+parallel = true
+omit = [
+    "*/tests/*",
+    "*/__init__.py",
+    "*/config_schema.py",  # Pure configuration
+    "*/data_structures.py",  # Pure data structures
+    "*/reference/*",
+    "*/scripts/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if __name__ == .__main__.:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "pass",
+    "@abstractmethod",
+    "@abc.abstractmethod",
+]
+precision = 2
+show_missing = true
+skip_covered = false
+skip_empty = true
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+[build-system]
+requires = ["setuptools>=65", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pixelis"
+version = "0.1.0"
+description = "A novel vision-language agent for pixel-space reasoning"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+    {name = "Pixelis Team", email = "pixelis@example.com"},
+]
+keywords = [
+    "vision-language",
+    "multimodal",
+    "reinforcement-learning",
+    "online-learning",
+    "pixel-reasoning",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    # Core dependencies will be listed here
+    # For now, we reference requirements.txt
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-xdist>=3.0",
+    "black>=24.0",
+    "ruff>=0.2.0",
+    "mypy>=1.8",
+    "pre-commit>=3.0",
+    "ipython>=8.0",
+    "ipdb>=0.13",
+]
+
+docs = [
+    "sphinx>=7.0",
+    "sphinx-rtd-theme>=2.0",
+    "sphinx-autodoc-typehints>=1.25",
+    "myst-parser>=2.0",
+]
+
+visualization = [
+    "matplotlib>=3.5",
+    "seaborn>=0.12",
+    "plotly>=5.0",
+    "graphviz>=0.20",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/pixelis"
+Documentation = "https://pixelis.readthedocs.io"
+Repository = "https://github.com/yourusername/pixelis"
+Issues = "https://github.com/yourusername/pixelis/issues"
+
+[project.scripts]
+pixelis-train = "scripts.train:main"
+pixelis-eval = "scripts.evaluate:main"
+pixelis-demo = "scripts.demo:main"

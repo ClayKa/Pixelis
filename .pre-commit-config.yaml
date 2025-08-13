@@ -1,0 +1,145 @@
+# Pre-commit hooks for code quality enforcement
+# See https://pre-commit.com for more information
+
+default_language_version:
+  python: python3.10
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+      - id: end-of-file-fixer
+        name: Fix end of files
+      - id: check-yaml
+        name: Check YAML syntax
+      - id: check-json
+        name: Check JSON syntax
+      - id: check-added-large-files
+        name: Check for large files
+        args: ['--maxkb=10000']  # 10MB limit
+      - id: check-merge-conflict
+        name: Check for merge conflicts
+      - id: check-ast
+        name: Check Python AST
+      - id: debug-statements
+        name: Check for debug statements
+      - id: check-docstring-first
+        name: Check docstring is first
+
+  # Black - Code formatter
+  - repo: https://github.com/psf/black
+    rev: 24.1.1
+    hooks:
+      - id: black
+        name: Format code with Black
+        language_version: python3.10
+        args: ['--line-length=100', '--target-version=py310']
+
+  # Ruff - Fast Python linter (replaces flake8, isort, and more)
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.2.0
+    hooks:
+      # Run the linter
+      - id: ruff
+        name: Lint with Ruff
+        args: ['--fix', '--exit-non-zero-on-fix']
+      # Run the formatter (import sorting)
+      - id: ruff-format
+        name: Format imports with Ruff
+
+  # MyPy - Static type checker
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.8.0
+    hooks:
+      - id: mypy
+        name: Type check with MyPy
+        args: [
+          '--ignore-missing-imports',
+          '--disallow-untyped-defs',
+          '--no-implicit-optional',
+          '--warn-redundant-casts',
+          '--warn-unused-ignores',
+          '--warn-return-any',
+          '--check-untyped-defs',
+          '--no-implicit-reexport',
+          '--strict-equality',
+        ]
+        additional_dependencies: [
+          'types-requests',
+          'types-PyYAML',
+          'types-setuptools',
+          'types-six',
+          'types-toml',
+        ]
+        exclude: '^(tests/|scripts/|reference/)'
+
+  # Security checks
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.6
+    hooks:
+      - id: bandit
+        name: Security check with Bandit
+        args: ['-ll', '--skip=B101,B601']  # Skip assert_used and shell_injection tests
+        exclude: '^(tests/|reference/)'
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.38.0
+    hooks:
+      - id: markdownlint
+        name: Lint Markdown files
+        args: ['--fix', '--disable', 'MD013', 'MD033']  # Disable line length and HTML checks
+
+  # Shell script checks
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.9.0.6
+    hooks:
+      - id: shellcheck
+        name: Check shell scripts
+
+  # Dockerfile linting
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint-docker
+        name: Lint Dockerfiles
+
+# Configuration for specific hooks
+files: |
+  (?x)^(
+    core/.*\.py|
+    scripts/.*\.py|
+    tests/.*\.py|
+    .*\.yaml|
+    .*\.yml|
+    .*\.json|
+    .*\.md|
+    .*\.sh|
+    Dockerfile.*
+  )$
+
+exclude: |
+  (?x)^(
+    reference/.*|
+    \.git/.*|
+    \.venv/.*|
+    venv/.*|
+    build/.*|
+    dist/.*|
+    .*\.egg-info/.*|
+    __pycache__/.*|
+    \.pytest_cache/.*|
+    \.mypy_cache/.*|
+    \.ruff_cache/.*|
+    saved_models/.*|
+    checkpoints/.*|
+    runs/.*|
+    artifact_cache/.*|
+    wandb/.*|
+    logs/.*|
+    cache/.*|
+    tmp/.*
+  )$

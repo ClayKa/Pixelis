@@ -1,0 +1,43 @@
+# Model Architecture Configuration
+# This file defines the base model architecture and loading parameters
+
+model:
+  # Model identification
+  model_name: "Qwen/Qwen2.5-VL-7B"
+  model_type: "qwen2_vl"
+  
+  # Model loading parameters
+  load_in_8bit: false
+  load_in_4bit: false
+  device_map: "auto"
+  torch_dtype: "float16"
+  
+  # Model architecture parameters
+  max_length: 4096
+  max_pixels: 4014080
+  min_pixels: 401408
+  image_resolution: 448
+  
+  # LoRA configuration
+  use_lora: true
+  lora_r: 32  # Will be dynamically determined by SVD analysis
+  lora_alpha: 64
+  lora_dropout: 0.1
+  lora_target_modules:
+    - "q_proj"
+    - "k_proj"
+    - "v_proj"
+    - "o_proj"
+    - "gate_proj"
+    - "up_proj"
+    - "down_proj"
+  
+  # Flash attention
+  use_flash_attention: true
+  
+  # Gradient checkpointing
+  gradient_checkpointing: true
+  
+  # Model paths (to be filled in deployment)
+  base_model_path: null
+  adapter_path: null

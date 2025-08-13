@@ -1,0 +1,45 @@
+============================================================
+SIMULATED MICRO-BENCHMARK RESULTS
+============================================================
+Timestamp: 2025-08-13T12:53:15.641759
+Note: These are simulated results based on typical GPU performance
+
+Configuration:
+  Model: qwen/Qwen2.5-VL-7B
+  GPU: 1 x A100-40GB
+  Batch Size: 1
+  Sequence Length: 2048
+  Gradient Accumulation: 4
+  Precision: bf16
+
+Timing Metrics:
+  Total Time: 42.30 seconds
+  Avg Step Time: 0.423 seconds
+  Step Time Range: [0.402, 0.444] seconds
+  Data Loading: 5.0% of time
+  Forward Pass: 35.0% of time
+  Backward Pass: 45.0% of time
+  Optimizer Step: 15.0% of time
+
+Memory Metrics:
+  Peak VRAM: 14.79 GB
+  Average VRAM: 13.45 GB
+  Model Size: 13.04 GB
+  Gradient Size: 0.13 GB
+  Optimizer State: 0.26 GB
+  Activation Memory: 0.02 GB
+
+Throughput Metrics:
+  Samples/Second: 2.36
+  Tokens/Second: 4841
+  TFLOPS: 203.33
+
+Extrapolated Estimates (Single GPU):
+  10,000 steps: 1.2 hours
+  100,000 steps: 11.8 hours
+
+Multi-GPU Scaling Estimates (8 GPUs, 85% efficiency):
+  10,000 steps: 0.2 hours
+  100,000 steps: 1.7 hours
+
+============================================================

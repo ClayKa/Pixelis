@@ -1,0 +1,251 @@
+# Configuration for CoTA Data Generation and Filtering
+# This file provides default settings for the data synthesis pipeline
+
+# ============================================================================
+# Data Generation Configuration
+# ============================================================================
+
+generation:
+  # Temperature settings for diversity
+  temperature_range: [0.3, 0.7, 1.0]
+  
+  # Sample type distribution
+  trap_sample_ratio: 0.2        # 20% trap samples
+  self_correction_ratio: 0.1     # 10% self-correction samples
+  
+  # Trajectory constraints
+  min_trajectory_length: 2
+  max_trajectory_length: 10
+  
+  # Diversity settings
+  diversity_penalty: 0.5
+  
+  # Output format
+  output_format: "json"          # json or jsonl
+
+# ============================================================================
+# Data Filtering Configuration
+# ============================================================================
+
+filtering:
+  # Heuristic filtering
+  heuristic:
+    min_trajectory_length: 2
+    max_trajectory_length: 20
+    min_question_length: 10
+    max_question_length: 500
+    valid_actions:
+      - "THINK"
+      - "SEGMENT_OBJECT_AT"
+      - "GET_PROPERTIES"
+      - "READ_TEXT"
+      - "TRACK_OBJECT"
+      - "ZOOM_IN"
+    required_fields:
+      - "sample_id"
+      - "task_type"
+      - "sample_type"
+      - "question"
+      - "trajectory"
+      - "answer"
+      - "ground_truth"
+      - "provenance"
+  
+  # Model-based quality scoring
+  quality:
+    judge_model: "gpt-4"          # Model for quality assessment
+    quality_threshold: 4.0        # Minimum score (1-5 scale)
+    consistency_threshold: 1.0     # Max std deviation
+    consistency_sample_rate: 0.01  # 1% of samples for consistency check
+    num_consistency_runs: 3        # Runs per consistency check
+    scoring_temperature: 0.7
+  
+  # Distribution requirements
+  distribution:
+    min_samples_per_category: 100
+    critical_sample_types:
+      - "trap_perceptual"
+      - "trap_logical"
+      - "self_correction"
+    critical_min_ratio: 0.5        # 50% of min_samples_per_category
+  
+  # Hard-negative mining
+  hard_negative:
+    enable: true
+    trap_sample_weight: 1.5
+    self_correction_weight: 1.2
+    quality_weight_power: 0.5      # quality_score ** power
+  
+  # Curriculum learning
+  curriculum:
+    stratify_by_difficulty: true
+    difficulty_thresholds:
+      easy: 0.8
+      medium: 0.6
+      # Below medium threshold is "hard"
+
+# ============================================================================
+# Dataset Sources
+# ============================================================================
+
+datasets:
+  # Training datasets
+  training:
+    - name: "SA1B"
+      path: "/data/sa1b"
+      enabled: true
+      sample_ratio: 0.2
+    
+    - name: "COCO"
+      path: "/data/coco2017"
+      enabled: true
+      sample_ratio: 0.3
+    
+    - name: "FineWeb"
+      path: "/data/fineweb"
+      enabled: false           # Text-only, enable if needed
+      sample_ratio: 0.1
+    
+    - name: "MathVista"
+      path: "/data/mathvista"
+      enabled: true
+      sample_ratio: 0.2
+    
+    - name: "InfographicsVQA"
+      path: "/data/infographics"
+      enabled: true
+      sample_ratio: 0.2
+  
+  # Evaluation datasets
+  evaluation:
+    - name: "MM-Vet"
+      path: "/data/mm-vet"
+    
+    - name: "MMMU"
+      path: "/data/mmmu"
+    
+    - name: "ViRL39K"
+      path: "/data/virl39k"
+
+# ============================================================================
+# Task Types Configuration
+# ============================================================================
+
+task_types:
+  object_counting:
+    enabled: true
+    weight: 0.15
+    min_objects: 1
+    max_objects: 20
+  
+  geometric_comparison:
+    enabled: true
+    weight: 0.15
+    require_segmentation: true
+  
+  text_extraction:
+    enabled: true
+    weight: 0.15
+    require_ocr: true
+  
+  spatial_reasoning:
+    enabled: true
+    weight: 0.15
+  
+  temporal_tracking:
+    enabled: true
+    weight: 0.10
+    require_video: true
+  
+  attribute_recognition:
+    enabled: true
+    weight: 0.15
+  
+  relationship_detection:
+    enabled: true
+    weight: 0.15
+
+# ============================================================================
+# Experiment Tracking
+# ============================================================================
+
+tracking:
+  # WandB configuration
+  wandb:
+    project: "pixelis-data"
+    entity: null              # Set your WandB entity
+    tags: ["cota", "synthesis", "phase1"]
+  
+  # Artifact versioning
+  artifacts:
+    raw_dataset_name: "cota-raw"
+    filtered_dataset_name: "cota-filtered"
+    create_lineage: true
+  
+  # Logging
+  logging:
+    level: "INFO"
+    save_logs: true
+    log_dir: "logs/data_synthesis"
+
+# ============================================================================
+# Resource Configuration
+# ============================================================================
+
+resources:
+  # Processing limits
+  batch_size: 100
+  max_workers: 4
+  
+  # Memory management
+  max_samples_in_memory: 10000
+  use_streaming: false         # Enable for very large datasets
+  
+  # API rate limiting
+  api_calls_per_minute: 60
+  api_retry_attempts: 3
+  api_timeout_seconds: 30
+
+# ============================================================================
+# Output Configuration
+# ============================================================================
+
+output:
+  # File paths
+  raw_data_dir: "data/raw"
+  filtered_data_dir: "data/filtered"
+  reports_dir: "data/reports"
+  
+  # File naming
+  timestamp_format: "%Y%m%d_%H%M%S"
+  include_timestamp: true
+  
+  # Compression
+  compress_output: false       # Enable for large datasets
+  compression_format: "gzip"
+
+# ============================================================================
+# Random Seeds
+# ============================================================================
+
+seeds:
+  generation_seed: 42
+  filtering_seed: 42
+  sampling_seed: 42
+
+# ============================================================================
+# Validation Settings
+# ============================================================================
+
+validation:
+  # Enable strict validation
+  strict_mode: true
+  
+  # Validation reports
+  generate_validation_report: true
+  report_format: "html"        # html, json, or text
+  
+  # Error handling
+  skip_invalid_samples: true
+  max_errors_before_stop: 1000
+  log_all_errors: false        # Set to true for debugging

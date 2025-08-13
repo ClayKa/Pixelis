@@ -1,0 +1,38 @@
+[run]
+source = core
+branch = True
+parallel = True
+omit = 
+    */tests/*
+    */__init__.py
+    */config_schema.py
+    */data_structures.py
+    */reference/*
+    */scripts/*
+    */saved_models/*
+    */checkpoints/*
+    */wandb/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if self\.debug:
+    if __name__ == .__main__.:
+    raise AssertionError
+    raise NotImplementedError
+    if TYPE_CHECKING:
+    pass
+    @abstractmethod
+    @abc.abstractmethod
+
+precision = 2
+show_missing = True
+skip_covered = False
+skip_empty = True
+
+[html]
+directory = htmlcov
+
+[xml]
+output = coverage.xml

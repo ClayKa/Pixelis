@@ -80,6 +80,9 @@ outputs/
 results/
 generations/
 evaluations/
+saved_models/*
+!saved_models/.gitkeep
+analysis_outputs/
 
 # Temporary files
 tmp/

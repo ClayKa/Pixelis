@@ -48,6 +48,9 @@ MarkupSafe==3.0.2
 Pillow==11.2.1
 PyYAML==6.0.2
 Pygments==2.19.1
+scikit-learn>=1.3.0  # For randomized SVD
+seaborn>=0.12.0  # For SVD visualization plots
+faiss-gpu>=1.7.4  # For efficient k-NN in experience buffer
 aiofiles==23.2.1
 aiohappyeyeballs==2.4.4
 aiohttp-cors==0.7.0
