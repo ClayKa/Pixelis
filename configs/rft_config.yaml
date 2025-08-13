@@ -1,0 +1,315 @@
+# RFT Training Configuration with Performance-Triggered Curriculum
+# Phase 1 Round 4 Implementation
+
+training:
+  mode: "rft"
+  num_epochs: 1
+  batch_size: 4
+  gradient_accumulation_steps: 8
+  learning_rate: 1.0e-5
+  warmup_steps: 100
+  max_grad_norm: 0.5
+  seed: 42
+  
+  # GRPO (Group Relative Policy Optimization) Configuration
+  grpo:
+    enabled: true
+    group_size: 4  # Number of samples to group for advantage normalization
+    advantage_normalization: true
+    clip_ratio: 0.2
+    value_coefficient: 0.5
+    entropy_coefficient: 0.01
+    filtering_threshold: 0.01  # Minimum advantage for sample to be used
+    
+  # PPO Training Parameters
+  ppo:
+    num_rollouts: 4
+    chunk_size: 128
+    mini_batch_size: 32
+    optimization_epochs: 4
+    kl_target: 0.02
+    kl_coefficient: 0.001
+    
+  # Evaluation Settings
+  eval_steps: 100
+  save_steps: 500
+  logging_steps: 10
+  eval_batch_size: 8
+  
+  # Checkpointing Strategy
+  save_total_limit: 5
+  save_at_curriculum_boundaries: true  # Critical for ablation studies
+  checkpoint_stages:
+    - "base"       # Only R_final
+    - "coherence"  # R_final + R_coherence
+    - "full"       # All rewards
+  
+# Performance-Triggered Reward Curriculum
+reward_curriculum:
+  enabled: true
+  
+  # Curriculum Stages with Performance Triggers
+  stages:
+    - name: "Phase1_Learn_Goal"
+      description: "Learn to achieve task objectives with R_final only"
+      weights:
+        task_reward: 1.0
+        curiosity_reward: 0.0
+        coherence_reward: 0.0
+        
+      # Exit conditions (ANY condition triggers advancement)
+      exit_conditions:
+        - metric: "success_rate_ma100"  # Moving average over 100 steps
+          threshold: 0.70
+          comparison: "greater"
+          description: "Advance when success rate exceeds 70%"
+          
+        - metric: "steps_completed"
+          threshold: 10000
+          comparison: "greater"
+          description: "Fallback: advance after 10k steps regardless"
+          
+    - name: "Phase2_Learn_Coherence"
+      description: "Add trajectory coherence reward to improve reasoning quality"
+      weights:
+        task_reward: 1.0
+        curiosity_reward: 0.0
+        coherence_reward: 0.1
+        
+      exit_conditions:
+        - metric: "coherence_improvement_slope"
+          threshold: 0.001
+          comparison: "less"
+          patience: 5  # Check improvement over 5 evaluation cycles
+          description: "Advance when coherence improvement plateaus"
+          
+        - metric: "combined_score_ma100"  # task_success * coherence_score
+          threshold: 0.65
+          comparison: "greater"
+          description: "Advance when combined performance is strong"
+          
+        - metric: "steps_completed"
+          threshold: 20000
+          comparison: "greater"
+          description: "Fallback: advance after 20k steps"
+          
+    - name: "Phase3_Full_Rewards"
+      description: "Add curiosity reward for exploration"
+      weights:
+        task_reward: 1.0
+        curiosity_reward: 0.05
+        coherence_reward: 0.1
+      # Final stage - no exit conditions
+      
+  # Curriculum Management Settings
+  metrics_window: 100  # Steps for moving average calculations
+  evaluation_frequency: 100  # Steps between curriculum advancement checks
+  regression_window: 5  # Number of evaluations for slope calculation
+  min_samples_for_advancement: 1000  # Minimum samples before first advancement
+  
+# Comprehensive Monitoring Configuration
+monitoring:
+  # Core Metrics to Track
+  track_metrics:
+    # Reward Components
+    - name: "reward_breakdown"
+      components: ["R_final", "R_curiosity", "R_coherence", "R_total"]
+      log_individual: true
+      log_normalized: true
+      
+    # Policy Metrics  
+    - name: "kl_divergence"
+      alert_threshold: 0.1  # Alert if KL exceeds this
+      
+    - name: "grpo_filtering_rate"
+      description: "Percentage of samples used for updates"
+      
+    # Behavioral Metrics
+    - name: "trajectory_length"
+      track_distribution: true
+      
+    - name: "tool_usage_frequency"
+      tools: ["SEGMENT_OBJECT_AT", "ZOOM_IN", "READ_TEXT", "TRACK_OBJECT", "GET_PROPERTIES"]
+      
+    - name: "rapr"  # Rate of Pixel-space Reasoning
+      description: "Ratio of visual operations to total actions"
+      
+    # Performance Metrics
+    - name: "success_rate"
+      window_sizes: [10, 100, 500]
+      
+    - name: "episode_return"
+      track_distribution: true
+      
+  # Moving Average Configurations
+  moving_averages:
+    - metric: "success_rate"
+      window: 100
+      name: "success_rate_ma100"
+      
+    - metric: "total_reward"
+      window: 500
+      name: "reward_ma500"
+      
+    - metric: "coherence_score"
+      window: 100
+      name: "coherence_ma100"
+      
+    - metric: "curiosity_bonus"
+      window: 100
+      name: "curiosity_ma100"
+      
+    - metric: "combined_score"
+      formula: "success_rate * coherence_score"
+      window: 100
+      name: "combined_score_ma100"
+      
+  # Slope Tracking for Plateau Detection
+  slope_tracking:
+    - metric: "coherence_ma100"
+      window: 5  # Calculate slope over 5 evaluations
+      name: "coherence_improvement_slope"
+      
+    - metric: "success_rate_ma100"
+      window: 5
+      name: "success_improvement_slope"
+      
+  # Real-time Export for Interactive Dashboard
+  export_to_json: true
+  json_export_path: "outputs/rft/monitor/metrics.json"
+  export_frequency: 10  # Export every N steps
+  export_fields:
+    - "step"
+    - "reward_breakdown"
+    - "kl_divergence"
+    - "grpo_filtering_rate"
+    - "tool_usage_frequency"
+    - "trajectory_length_mean"
+    - "success_rate_ma100"
+    - "current_curriculum_stage"
+    
+  # WandB Configuration
+  wandb:
+    enabled: true
+    project: "pixelis-rft"
+    entity: null  # Set your WandB entity
+    tags:
+      - "rft"
+      - "grpo"
+      - "curriculum"
+      - "multi-reward"
+    log_frequency: 10  # Log every N steps
+    log_gradients: true
+    log_model: false  # Model logging handled separately
+    
+  # TensorBoard Configuration (as backup)
+  tensorboard:
+    enabled: true
+    log_dir: "outputs/rft/tensorboard"
+    
+# Model Configuration
+model:
+  base_model: "Qwen/Qwen2.5-VL-7B"
+  use_lora: true
+  lora_config:
+    r: 32  # Rank (will be overridden by dynamic config if available)
+    lora_alpha: 16
+    lora_dropout: 0.1
+    target_modules:  # Will be determined by SVD analysis
+      - "q_proj"
+      - "v_proj"
+      - "k_proj"
+      - "o_proj"
+      - "gate_proj"
+      - "up_proj"
+      - "down_proj"
+  gradient_checkpointing: true
+  load_in_8bit: false
+  load_in_4bit: false
+  
+# Data Configuration
+data:
+  train_data_path: "data/processed/cota_train.json"
+  eval_data_path: "data/processed/cota_eval.json"
+  max_sequence_length: 2048
+  max_images_per_sample: 1
+  
+  # Sampling Strategy
+  sampling:
+    use_weighted_sampling: true
+    hard_negative_weight: 2.0  # Oversample hard negatives
+    trap_sample_weight: 3.0    # Heavily oversample trap samples
+    
+# Reward Component Configurations
+reward_components:
+  # Task Reward
+  task_reward:
+    correct_answer_reward: 1.0
+    incorrect_answer_penalty: -0.5
+    partial_credit_enabled: true
+    
+  # Curiosity Reward (Performance-Aware)
+  curiosity_reward:
+    beta: 0.2  # Forward model weight
+    eta: 0.5   # Scaling factor
+    intrinsic_scale: 0.1
+    cache_size: 10000  # LRU cache for efficiency
+    use_lora_dynamics: true  # Use LoRA for dynamics model
+    lora_rank: 8
+    
+  # Trajectory Coherence Reward
+  coherence_reward:
+    min_similarity: 0.7  # Minimum cosine similarity between steps
+    repetition_penalty: -0.5
+    backtrack_penalty: -0.3
+    pattern_bonus: 0.2  # Bonus for recognized patterns
+    min_trajectory_length: 2
+    
+  # Tool Usage Penalties
+  tool_penalties:
+    misuse_penalty: -0.1
+    excessive_use_threshold: 10
+    excessive_use_penalty: -0.2
+    invalid_operation_penalty: -0.5
+    
+  # Reward Normalization
+  normalization:
+    enabled: true
+    method: "z_score"  # or "min_max"
+    clip_value: 10.0
+    update_stats_every: 100  # Update running statistics
+    
+# Hardware and Performance Configuration
+hardware:
+  mixed_precision: "bf16"  # bf16, fp16, or fp32
+  tf32: true  # Enable TF32 on Ampere GPUs
+  compile_model: false  # torch.compile (PyTorch 2.0+)
+  use_flash_attention: true
+  gradient_accumulation_dtype: "fp32"  # Accumulate gradients in fp32
+  
+  # Memory Optimization
+  gradient_checkpointing: true
+  cpu_offload: false
+  optimizer_offload: false
+  
+  # Distributed Training
+  distributed:
+    backend: "nccl"
+    find_unused_parameters: false
+    broadcast_buffers: false
+    
+# Trajectory Analysis Configuration (Post-Training)
+trajectory_analysis:
+  enabled: true
+  num_samples: 50
+  compare_stages: true  # Compare trajectories across curriculum stages
+  visualization:
+    create_plots: true
+    create_animations: false
+    export_format: "png"
+  metrics:
+    - "trajectory_length"
+    - "tool_usage_pattern"
+    - "coherence_score"
+    - "loop_detection"
+    - "exploration_efficiency"

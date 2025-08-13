@@ -1,0 +1,15 @@
+# Optional dependencies for the interactive training monitor
+# Install with: pip install -r requirements.monitor.txt
+
+# Web framework for interactive dashboard
+gradio>=4.0.0
+
+# Plotting libraries
+plotly>=5.17.0
+
+# Data manipulation (should already be installed)
+pandas>=2.0.0
+numpy>=1.24.0
+
+# For better performance (optional)
+uvicorn>=0.24.0
