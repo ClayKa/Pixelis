@@ -193,92 +193,124 @@ def run_sft(config: Dict[str, Any], artifact_manager: ArtifactManager):
 
 
 @track_artifacts(inputs=["model", "dataset"], outputs=["model", "metrics"])
-def run_rft(config: TrainingConfig, artifact_manager: ArtifactManager):
+def run_rft(config: Dict[str, Any], artifact_manager: ArtifactManager):
     """
-    Run Reinforcement Fine-Tuning (RFT) with artifact tracking.
+    Run Reinforcement Fine-Tuning (RFT) with GRPO and artifact tracking.
     
     Args:
-        config: Training configuration
+        config: Training configuration dictionary
         artifact_manager: Artifact manager instance
     
     Returns:
         Tuple of (model_path, metrics)
     """
-    logger.info("Starting RFT training...")
+    logger.info("Starting RFT training with GRPO...")
     
-    # Load base model artifact
-    model_artifact = artifact_manager.use_artifact(
-        name=config.model.artifact_name or "sft_model_final",
-        version=config.model.artifact_version or "latest",
-    )
-    logger.info(f"Using model: {model_artifact.name}:{model_artifact.version}")
+    # Import RFT training module
+    try:
+        from train_rft import run_rft_training
+    except ImportError:
+        from scripts.train_rft import run_rft_training
     
-    # Load dataset artifact
-    dataset_artifact = artifact_manager.use_artifact(
-        name=config.dataset.artifact_name,
-        version=config.dataset.artifact_version,
-    )
-    logger.info(f"Using dataset: {dataset_artifact.name}:{dataset_artifact.version}")
+    # Load configuration from files if needed
+    if isinstance(config, TrainingConfig):
+        config_dict = config.to_dict() if hasattr(config, 'to_dict') else vars(config)
+    else:
+        config_dict = config
     
-    # TODO: Implement actual RFT training logic
-    # This is a placeholder implementation
+    # Ensure we have all necessary configs
+    if "reward" not in config_dict:
+        training_params_path = Path("configs/training_params.yaml")
+        if training_params_path.exists():
+            with open(training_params_path, 'r') as f:
+                training_params = yaml.safe_load(f)
+                config_dict.update(training_params)
     
-    # Simulate RL training
-    import time
-    import random
+    # Initialize wandb if configured
+    import wandb
+    if wandb.run is None and "wandb" in config_dict.get("training", {}).get("report_to", []):
+        wandb.init(
+            project="pixelis-rft",
+            name=f"rft_grpo_{wandb.util.generate_id()}",
+            config=config_dict,
+            tags=["rft", "grpo"],
+        )
     
-    metrics = {}
-    for episode in range(config.training.num_episodes):
-        # Simulate episode
-        time.sleep(0.1)
-        
-        episode_metrics = {
-            "episode": episode + 1,
-            "reward": random.uniform(-1, 1) + episode / config.training.num_episodes,
-            "kl_divergence": random.uniform(0.01, 0.1),
-            "success_rate": min(0.9, 0.3 + episode / config.training.num_episodes),
-        }
-        
-        # Log metrics
+    # Get SFT model path
+    sft_model_path = config_dict.get("sft_model_path", "outputs/sft/final")
+    if not Path(sft_model_path).exists():
+        # Try to find the most recent SFT checkpoint
+        sft_output_dir = Path("outputs/sft")
+        if sft_output_dir.exists():
+            checkpoints = list(sft_output_dir.glob("checkpoint-*"))
+            if checkpoints:
+                sft_model_path = str(max(checkpoints, key=lambda p: p.stat().st_mtime))
+                logger.info(f"Using SFT checkpoint: {sft_model_path}")
+            else:
+                logger.warning("No SFT checkpoints found, will use base model")
+                sft_model_path = None
+    
+    # Log configuration
+    if artifact_manager:
         artifact_manager.log_artifact(
-            name=f"rft_metrics_episode_{episode + 1}",
-            type=ArtifactType.METRICS,
-            data=episode_metrics,
-            parent_artifacts=[
-                f"{model_artifact.name}:{model_artifact.version}",
-                f"{dataset_artifact.name}:{dataset_artifact.version}",
-            ],
-        )
-        
-        metrics[f"episode_{episode + 1}"] = episode_metrics
-        logger.info(
-            f"Episode {episode + 1}: "
-            f"reward={episode_metrics['reward']:.4f}, "
-            f"success_rate={episode_metrics['success_rate']:.2%}"
+            name="rft_config",
+            type=ArtifactType.CONFIG,
+            data={
+                "sft_model": sft_model_path,
+                "reward_config": config_dict.get("reward", {}),
+                "grpo_config": config_dict.get("grpo", {}),
+            },
         )
     
-    # Save final model
-    model_path = Path("checkpoints") / "rft_model.pt"
-    model_path.parent.mkdir(parents=True, exist_ok=True)
+    # Set output directory
+    output_dir = config_dict.get("training", {}).get("output_dir", "./outputs/rft")
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
     
-    with open(model_path, "w") as f:
-        f.write("# Placeholder RFT model file\n")
-    
-    # Log final model
-    final_model = artifact_manager.log_large_artifact(
-        name="rft_model_final",
-        file_path=model_path,
-        type=ArtifactType.MODEL,
-        metadata={
-            "training_config": config.to_dict(),
-            "base_model": f"{model_artifact.name}:{model_artifact.version}",
-            "final_metrics": metrics[f"episode_{config.training.num_episodes}"],
-        },
+    # Run RFT training
+    logger.info("Starting GRPO-powered RFT training...")
+    final_model_path = run_rft_training(
+        config=config_dict,
+        sft_model_path=sft_model_path or "",
+        output_dir=output_dir,
+        resume_from_checkpoint=config_dict.get("training", {}).get("resume_from_checkpoint")
     )
     
-    logger.info(f"✓ RFT training complete. Model saved: {final_model.name}:{final_model.version}")
+    # Collect final metrics
+    metrics = {
+        "final_model_path": final_model_path,
+        "training_complete": True,
+        "grpo_enabled": True,
+        "reward_components": ["task", "curiosity", "coherence", "penalty"],
+    }
     
-    return str(model_path), metrics
+    # Log final model artifact
+    if artifact_manager and Path(final_model_path).exists():
+        model_artifact = artifact_manager.log_large_artifact(
+            name="rft_model_final",
+            file_path=Path(final_model_path),
+            type=ArtifactType.MODEL,
+            metadata={
+                "training_config": config_dict,
+                "base_model": sft_model_path,
+                "final_metrics": metrics,
+                "grpo_config": config_dict.get("grpo", {}),
+            },
+        )
+        logger.info(f"✓ Model artifact logged: {model_artifact.name}:{model_artifact.version}")
+    
+    # Save training summary
+    summary_path = Path(output_dir) / "training_summary.json"
+    with open(summary_path, 'w') as f:
+        json.dump({
+            "config": config_dict,
+            "metrics": metrics,
+            "model_path": str(final_model_path),
+            "sft_base": sft_model_path,
+        }, f, indent=2)
+    
+    logger.info(f"✓ RFT training complete. Model saved to {final_model_path}")
+    
+    return str(final_model_path), metrics
 
 
 def run_ttrl(config: TrainingConfig, artifact_manager: ArtifactManager):
@@ -507,7 +539,8 @@ def main():
             # Pass dictionary config for SFT
             model_path, metrics = run_sft(config_dict, ctx.artifact_manager)
         elif args.mode == "rft":
-            model_path, metrics = run_rft(config, ctx.artifact_manager)
+            # Pass dictionary config for RFT
+            model_path, metrics = run_rft(config_dict, ctx.artifact_manager)
         elif args.mode == "ttrl":
             model_path, metrics = run_ttrl(config, ctx.artifact_manager)
         else:
