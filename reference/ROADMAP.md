@@ -265,15 +265,15 @@ Important!!!: When finish one task or one round, or even one phase, replace the 
 
 ### Phase 3: Experiments, Evaluation, and Analysis ⚪
 
-- **Round 0: Establish Rigorous Experimental Protocol** ⚪
+- **Round 0: Establish Rigorous Experimental Protocol** ✅
     - See: `/tasks/Phase3Round0.md`
-    - **Task 001: Mandate Statistical Significance and Reproducibility** ⚪
+    - **Task 001: Mandate Statistical Significance and Reproducibility** ✅
         - Formally establish a protocol that all key reported experimental results must be scientifically valid, credible, and reproducible by adhering to the highest empirical standards.
-    - **Task 002: Implement Multi-Seed Experimental Runs** ⚪
+    - **Task 002: Implement Multi-Seed Experimental Runs** ✅
         - For every key model configuration, the entire end-to-end training process must be executed a minimum of three times with different random seeds, managed by an automated script.
-    - **Task 003: Enforce Reporting of Aggregated Results** ⚪
+    - **Task 003: Enforce Reporting of Aggregated Results** ✅
         - All reported metrics in tables and plots must be presented as an aggregate of the multi-seed runs, in the standard format of `mean ± standard deviation`.
-    - **Task 004: (Optional but Recommended) Perform Statistical Significance Testing** ⚪
+    - **Task 004: (Optional but Recommended) Perform Statistical Significance Testing** ✅
         - When comparing primary models against baselines, perform a statistical test (e.g., paired t-test) on the multi-seed results to confirm that observed improvements are statistically significant.
 
 - **Round 1: Comprehensive and Focused Ablation Studies** ⚪

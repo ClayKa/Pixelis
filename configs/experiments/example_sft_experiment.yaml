@@ -1,0 +1,66 @@
+# Example SFT Multi-Seed Experiment Configuration
+# This file demonstrates how to configure a multi-seed SFT experiment
+
+experiment_name: "baseline_sft_qwen25vl"
+mode: "sft"
+config_file: "configs/sft_config.yaml"
+
+# Seeds for reproducibility (minimum 3 recommended)
+seeds: [42, 84, 126, 168, 210]
+
+# Output configuration
+output_dir: "outputs/experiments"
+
+# WandB configuration
+wandb_project: "pixelis-experiments"
+wandb_tags:
+  - "sft"
+  - "baseline"
+  - "qwen2.5-vl"
+  - "multi-seed"
+
+# Hardware configuration
+num_gpus: 1
+num_nodes: 1
+
+# Parallel execution (set to true for faster multi-seed runs)
+parallel_seeds: false
+max_workers: 2
+
+# Resume from checkpoint if available
+resume_from_checkpoint: false
+
+# Environment variables
+env_vars:
+  CUDA_VISIBLE_DEVICES: "0"
+  HF_ENDPOINT: "https://hf-mirror.com"
+  MAX_PIXELS: "4014080"
+  MIN_PIXELS: "401408"
+
+# Experiment metadata
+metadata:
+  description: "Baseline SFT training with Qwen2.5-VL 7B model"
+  dataset: "CoTA synthesized data"
+  expected_metrics:
+    - "accuracy"
+    - "f1_score"
+    - "loss"
+    - "success_rate"
+  
+  hyperparameters:
+    learning_rate: 1e-4
+    batch_size: 32
+    num_epochs: 10
+    warmup_ratio: 0.1
+    weight_decay: 0.01
+    
+  evaluation:
+    benchmarks:
+      - "MM-Vet"
+      - "MMMU"
+      - "Custom Capabilities Benchmark"
+    
+    metrics_threshold:
+      accuracy: 0.80
+      f1_score: 0.75
+      success_rate: 0.70

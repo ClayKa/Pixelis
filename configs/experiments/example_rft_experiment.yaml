@@ -1,0 +1,103 @@
+# Example RFT Multi-Seed Experiment Configuration
+# This file demonstrates how to configure a multi-seed RFT experiment
+
+experiment_name: "pixelis_rft_grpo"
+mode: "rft"
+config_file: "configs/rft_config.yaml"
+
+# Seeds for reproducibility (minimum 3 recommended)
+seeds: [42, 84, 126]
+
+# Output configuration
+output_dir: "outputs/experiments"
+
+# WandB configuration
+wandb_project: "pixelis-experiments"
+wandb_tags:
+  - "rft"
+  - "grpo"
+  - "multi-reward"
+  - "qwen2.5-vl"
+  - "multi-seed"
+
+# Hardware configuration
+num_gpus: 2  # RFT typically needs more GPUs
+num_nodes: 1
+
+# Parallel execution (careful with RFT - may need sequential for memory)
+parallel_seeds: false
+max_workers: 1
+
+# Resume from checkpoint (usually from SFT checkpoint)
+resume_from_checkpoint: true
+
+# Environment variables
+env_vars:
+  CUDA_VISIBLE_DEVICES: "0,1"
+  HF_ENDPOINT: "https://hf-mirror.com"
+  MAX_PIXELS: "4014080"
+  MIN_PIXELS: "401408"
+  temperature: "1.0"
+  algo: "group"
+
+# Experiment metadata
+metadata:
+  description: "Reinforcement Fine-Tuning with GRPO and multi-component rewards"
+  
+  base_model: "outputs/experiments/baseline_sft_qwen25vl/best_checkpoint"
+  
+  reward_components:
+    - name: "task_reward"
+      weight: 1.0
+      description: "Final task success reward"
+    
+    - name: "curiosity_reward"
+      weight: 0.3
+      description: "Intrinsic curiosity-driven exploration reward"
+    
+    - name: "coherence_reward"
+      weight: 0.2
+      description: "Trajectory coherence and logical consistency reward"
+  
+  curriculum:
+    stages:
+      - name: "warmup"
+        steps: 1000
+        active_rewards: ["task_reward"]
+      
+      - name: "exploration"
+        steps: 3000
+        active_rewards: ["task_reward", "curiosity_reward"]
+      
+      - name: "refinement"
+        steps: 5000
+        active_rewards: ["task_reward", "curiosity_reward", "coherence_reward"]
+  
+  hyperparameters:
+    learning_rate: 5e-5
+    batch_size: 16
+    num_rollouts: 4
+    ppo_epochs: 4
+    clip_range: 0.2
+    value_loss_coef: 0.5
+    entropy_coef: 0.01
+    max_grad_norm: 0.5
+    kl_penalty: 0.1
+    
+  evaluation:
+    benchmarks:
+      - "MM-Vet"
+      - "MMMU"
+      - "ViRL39K"
+      - "Custom Capabilities Benchmark"
+    
+    trajectory_analysis:
+      - "tool_usage_frequency"
+      - "trajectory_length_distribution"
+      - "reasoning_coherence_score"
+      - "exploration_diversity"
+    
+    expected_improvements:
+      success_rate: "+10%"
+      reasoning_coherence: "+15%"
+      tool_accuracy: "+8%"
