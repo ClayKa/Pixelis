@@ -41,7 +41,9 @@ class ExperienceBuffer:
         embedding_dim: int = 768,
         similarity_metric: str = "cosine",
         enable_persistence: bool = True,
-        persistence_path: str = "./experience_buffer"
+        persistence_path: str = "./experience_buffer",
+        retention_days: int = 90,
+        enable_auto_pruning: bool = True
     ):
         """
         Initialize the experience buffer.
@@ -52,12 +54,16 @@ class ExperienceBuffer:
             similarity_metric: Metric for similarity ('cosine', 'euclidean', 'manhattan')
             enable_persistence: Whether to enable persistence
             persistence_path: Path for persistent storage
+            retention_days: Maximum retention period in days (default: 90 per policy)
+            enable_auto_pruning: Whether to enable automatic data pruning
         """
         self.max_size = max_size
         self.embedding_dim = embedding_dim
         self.similarity_metric = similarity_metric
         self.enable_persistence = enable_persistence
         self.persistence_path = Path(persistence_path)
+        self.retention_days = retention_days
+        self.enable_auto_pruning = enable_auto_pruning
         
         # Core data structure - deque for automatic size management
         self.buffer = deque(maxlen=max_size)
@@ -79,8 +85,15 @@ class ExperienceBuffer:
         # Statistics
         self.total_additions = 0
         self.total_retrievals = 0
+        self.total_pruned = 0
+        self.last_pruning = datetime.now()
         
-        logger.info(f"Experience buffer initialized with max_size={max_size}")
+        # Start background pruning task if enabled
+        self.pruning_thread = None
+        if self.enable_auto_pruning:
+            self._start_pruning_task()
+        
+        logger.info(f"Experience buffer initialized with max_size={max_size}, retention_days={retention_days}")
     
     def _create_faiss_index(self) -> faiss.Index:
         """
@@ -535,8 +548,234 @@ class ExperienceBuffer:
         except Exception as e:
             logger.error(f"Error applying WAL: {e}")
     
+    def prune_old_experiences(self) -> int:
+        """
+        Prune experiences older than retention period.
+        
+        Implements data retention policy as defined in SECURITY_AND_PRIVACY.md.
+        Experiences older than retention_days are permanently deleted.
+        
+        Returns:
+            Number of experiences pruned
+        """
+        with self.lock:
+            try:
+                current_time = datetime.now()
+                pruned_count = 0
+                experiences_to_remove = []
+                
+                # Identify experiences to prune
+                for exp_id, experience in self.experience_dict.items():
+                    age_days = (current_time - experience.timestamp).days
+                    
+                    if age_days > self.retention_days:
+                        experiences_to_remove.append(exp_id)
+                        logger.debug(f"Marking experience {exp_id} for pruning (age: {age_days} days)")
+                
+                # Remove identified experiences
+                for exp_id in experiences_to_remove:
+                    # Remove from dictionary
+                    del self.experience_dict[exp_id]
+                    
+                    # Remove from FAISS index mapping
+                    # Note: Actual FAISS index cleanup requires rebuilding
+                    for faiss_id, stored_id in list(self.index_to_id.items()):
+                        if stored_id == exp_id:
+                            del self.index_to_id[faiss_id]
+                            break
+                    
+                    pruned_count += 1
+                
+                # Rebuild FAISS index if experiences were pruned
+                if pruned_count > 0:
+                    self._rebuild_faiss_index()
+                    
+                    # Log pruning event to audit trail
+                    self._log_pruning_event(pruned_count, experiences_to_remove)
+                    
+                    # Update statistics
+                    self.total_pruned += pruned_count
+                    self.last_pruning = current_time
+                    
+                    logger.info(f"Pruned {pruned_count} experiences older than {self.retention_days} days")
+                
+                return pruned_count
+                
+            except Exception as e:
+                logger.error(f"Error during experience pruning: {e}")
+                return 0
+    
+    def _rebuild_faiss_index(self):
+        """
+        Rebuild FAISS index after pruning.
+        
+        This is necessary because FAISS doesn't support efficient deletion.
+        """
+        try:
+            # Create new index
+            new_index = self._create_faiss_index()
+            new_index_to_id = {}
+            
+            # Re-add all remaining experiences
+            faiss_id = 0
+            for exp_id, experience in self.experience_dict.items():
+                if experience.embeddings and "combined" in experience.embeddings:
+                    embedding = experience.get_embedding("combined")
+                    
+                    if embedding is not None:
+                        # Convert to numpy
+                        if isinstance(embedding, torch.Tensor):
+                            embedding = embedding.detach().cpu().numpy()
+                        
+                        if len(embedding.shape) == 1:
+                            embedding = embedding.reshape(1, -1)
+                        
+                        # Normalize for cosine similarity
+                        if self.similarity_metric == "cosine":
+                            embedding = embedding / (np.linalg.norm(embedding) + 1e-8)
+                        
+                        # Add to new index
+                        new_index.add_with_ids(embedding, np.array([faiss_id], dtype=np.int64))
+                        new_index_to_id[faiss_id] = exp_id
+                        faiss_id += 1
+            
+            # Replace old index
+            self.index = new_index
+            self.index_to_id = new_index_to_id
+            
+            logger.debug(f"Rebuilt FAISS index with {len(self.index_to_id)} entries")
+            
+        except Exception as e:
+            logger.error(f"Error rebuilding FAISS index: {e}")
+    
+    def _log_pruning_event(self, count: int, pruned_ids: List[str]):
+        """
+        Log pruning event for audit trail.
+        
+        Args:
+            count: Number of experiences pruned
+            pruned_ids: List of pruned experience IDs
+        """
+        try:
+            if self.enable_persistence:
+                audit_path = self.persistence_path / "pruning_audit.jsonl"
+                
+                with open(audit_path, "a") as f:
+                    audit_entry = {
+                        "timestamp": datetime.now().isoformat(),
+                        "event": "data_pruning",
+                        "count": count,
+                        "retention_days": self.retention_days,
+                        "pruned_ids": pruned_ids[:10],  # Log first 10 IDs for reference
+                        "total_remaining": len(self.experience_dict)
+                    }
+                    f.write(json.dumps(audit_entry) + "\n")
+                    
+        except Exception as e:
+            logger.error(f"Error logging pruning event: {e}")
+    
+    def _start_pruning_task(self):
+        """
+        Start background task for automatic data pruning.
+        
+        Runs daily to enforce data retention policy.
+        """
+        import time
+        
+        def pruning_worker():
+            """Background worker for periodic pruning."""
+            while self.enable_auto_pruning:
+                try:
+                    # Sleep for 24 hours (86400 seconds)
+                    # Check every hour if shutdown is requested
+                    for _ in range(24):
+                        if not self.enable_auto_pruning:
+                            break
+                        time.sleep(3600)  # Sleep 1 hour
+                    
+                    if self.enable_auto_pruning:
+                        # Run pruning
+                        pruned = self.prune_old_experiences()
+                        
+                        # Save checkpoint after pruning
+                        if pruned > 0 and self.enable_persistence:
+                            self._save_checkpoint()
+                            
+                except Exception as e:
+                    logger.error(f"Error in pruning worker: {e}")
+                    time.sleep(3600)  # Wait an hour before retrying
+        
+        # Start background thread
+        self.pruning_thread = threading.Thread(
+            target=pruning_worker,
+            name="ExperienceBufferPruning",
+            daemon=True
+        )
+        self.pruning_thread.start()
+        
+        logger.info("Started automatic data pruning task (runs daily)")
+    
+    def get_retention_statistics(self) -> Dict[str, Any]:
+        """
+        Get statistics about data retention and pruning.
+        
+        Returns:
+            Dictionary with retention statistics
+        """
+        with self.lock:
+            current_time = datetime.now()
+            age_distribution = {
+                "0-7_days": 0,
+                "7-30_days": 0,
+                "30-60_days": 0,
+                "60-90_days": 0,
+                "over_90_days": 0
+            }
+            
+            oldest_timestamp = None
+            newest_timestamp = None
+            
+            for experience in self.experience_dict.values():
+                age_days = (current_time - experience.timestamp).days
+                
+                # Update age distribution
+                if age_days <= 7:
+                    age_distribution["0-7_days"] += 1
+                elif age_days <= 30:
+                    age_distribution["7-30_days"] += 1
+                elif age_days <= 60:
+                    age_distribution["30-60_days"] += 1
+                elif age_days <= 90:
+                    age_distribution["60-90_days"] += 1
+                else:
+                    age_distribution["over_90_days"] += 1
+                
+                # Track oldest and newest
+                if oldest_timestamp is None or experience.timestamp < oldest_timestamp:
+                    oldest_timestamp = experience.timestamp
+                if newest_timestamp is None or experience.timestamp > newest_timestamp:
+                    newest_timestamp = experience.timestamp
+            
+            return {
+                "retention_days": self.retention_days,
+                "total_pruned": self.total_pruned,
+                "last_pruning": self.last_pruning.isoformat(),
+                "age_distribution": age_distribution,
+                "oldest_experience": oldest_timestamp.isoformat() if oldest_timestamp else None,
+                "newest_experience": newest_timestamp.isoformat() if newest_timestamp else None,
+                "experiences_to_prune": age_distribution.get("over_90_days", 0)
+            }
+    
     def shutdown(self):
         """Gracefully shutdown the buffer."""
+        # Stop pruning task
+        if self.enable_auto_pruning:
+            self.enable_auto_pruning = False
+            if self.pruning_thread and self.pruning_thread.is_alive():
+                logger.info("Waiting for pruning task to complete...")
+                self.pruning_thread.join(timeout=5)
+        
+        # Save final checkpoint
         if self.enable_persistence:
             self._save_checkpoint()
         

@@ -22,6 +22,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Import alerting and monitoring modules
+from ..modules.alerter import Alerter, HealthMonitor, AlertSeverity
+# Import privacy and security modules
+from ..modules.privacy import DataAnonymizer, PrivacyConfig
 
 # Shared memory management classes
 @dataclass
@@ -298,20 +302,49 @@ class InferenceEngine:
             'total_requests': 0,
             'total_updates': 0,
             'watchdog_cleanups': 0,
-            'failed_updates': 0
+            'failed_updates': 0,
+            'faiss_failures': 0,
+            'critical_failures': 0
         }
         
-        logger.info("Inference Engine initialized")
+        # Task 003: Initialize alerter and health monitor
+        self.alerter = Alerter(config)
+        self.health_monitor = HealthMonitor(self.alerter)
+        
+        # Monitoring thread
+        self.monitoring_interval = config.get('monitoring_interval', 10.0)
+        self.monitoring_thread: Optional[threading.Thread] = None
+        self.monitoring_running = False
+        
+        # Task 002 (Phase 2 Round 6): Initialize privacy protection
+        privacy_config = PrivacyConfig(
+            enable_pii_redaction=config.get('enable_pii_redaction', True),
+            enable_image_metadata_stripping=config.get('enable_metadata_stripping', True),
+            enable_differential_privacy=config.get('enable_differential_privacy', False),
+            log_redaction_stats=config.get('log_privacy_stats', True)
+        )
+        self.data_anonymizer = DataAnonymizer(privacy_config)
+        
+        # Read-only mode for public demonstrator (Task 003 Phase 2 Round 6)
+        self.read_only_mode = config.get('read_only_mode', False)
+        if self.read_only_mode:
+            logger.warning("Inference Engine initialized in READ-ONLY MODE - no learning or updates will occur")
+        
+        logger.info("Inference Engine initialized with monitoring, alerting, and privacy protection")
     
     async def infer_and_adapt(
         self,
         input_data: Dict[str, Any]
     ) -> Tuple[Any, float, Dict[str, Any]]:
         """
-        Main inference and adaptation loop.
+        Main inference and adaptation loop with cold start bootstrapping.
         
-        Performs inference, retrieves similar experiences, applies voting,
-        and optionally triggers a learning update based on confidence.
+        Orchestrates the complete online evolution loop:
+        1. Model inference
+        2. Experience buffer retrieval (if available)
+        3. Temporal ensemble voting (if sufficient experiences)
+        4. Confidence-gated learning updates
+        5. Monitoring and health tracking
         
         Args:
             input_data: Input data containing image features and question
@@ -319,44 +352,165 @@ class InferenceEngine:
         Returns:
             Tuple of (prediction, confidence_score, metadata)
         """
-        # Step 1: Get initial model prediction
-        with torch.no_grad():
-            initial_prediction = await self._get_model_prediction(input_data)
+        start_time = time.time()
+        metadata = {
+            'inference_path': 'unknown',
+            'buffer_size': len(self.experience_buffer) if hasattr(self.experience_buffer, '__len__') else 0,
+            'cold_start_active': False
+        }
         
-        # Step 2: Retrieve k-NN neighbors from experience buffer
-        neighbors = self.experience_buffer.search_index(
-            input_data,
-            k=self.config.get('k_neighbors', 5)
-        )
-        
-        # Step 3: Apply temporal ensemble voting
-        voting_result = self.voting_module.vote(
-            initial_prediction,
-            neighbors,
-            strategy=self.config.get('voting_strategy', 'weighted')
-        )
-        
-        # Step 4: Check confidence and potentially trigger update
-        if self._should_trigger_update(voting_result.confidence):
-            # Determine if this update should go through human review
-            if self._should_request_human_review():
-                await self._enqueue_human_review_task(
+        try:
+            # Step 1: Get initial model prediction
+            with torch.no_grad():
+                initial_prediction = await self._get_model_prediction(input_data)
+            
+            # Task 002: Cold Start Bootstrapping Strategy
+            # Check if we're in cold start mode
+            cold_start_threshold = self.config.get('cold_start_threshold', 100)
+            buffer_size = len(self.experience_buffer) if hasattr(self.experience_buffer, '__len__') else 0
+            
+            if buffer_size < cold_start_threshold:
+                # Conservative mode: bypass ensemble voting, build memory
+                logger.info(
+                    f"Cold start mode active: buffer size {buffer_size} < threshold {cold_start_threshold}"
+                )
+                metadata['cold_start_active'] = True
+                metadata['inference_path'] = 'cold_start_direct'
+                
+                # Add experience to buffer with high priority for rapid memory building
+                await self._add_bootstrap_experience(input_data, initial_prediction)
+                
+                # Return direct model prediction without ensemble or updates
+                confidence = initial_prediction.get('confidence', 0.5) if isinstance(initial_prediction, dict) else 0.5
+                
+                # Log cold start metrics
+                self._log_inference_metrics({
+                    'mode': 'cold_start',
+                    'buffer_size': buffer_size,
+                    'confidence': confidence,
+                    'inference_time': time.time() - start_time
+                })
+                
+                return (
+                    initial_prediction.get('answer', initial_prediction) if isinstance(initial_prediction, dict) else initial_prediction,
+                    confidence,
+                    metadata
+                )
+            
+            # Normal mode: Full ensemble voting and adaptation
+            metadata['inference_path'] = 'ensemble'
+            
+            # Step 2: Retrieve k-NN neighbors from experience buffer
+            neighbors = []
+            try:
+                neighbors = self.experience_buffer.search_index(
+                    input_data,
+                    k=self.config.get('k_neighbors', 5)
+                )
+                metadata['neighbors_retrieved'] = len(neighbors)
+            except Exception as e:
+                logger.warning(f"k-NN retrieval failed: {e}")
+                metadata['knn_failure'] = str(e)
+                # Track failure rate for monitoring
+                with self.stats_lock:
+                    self.stats['faiss_failures'] = self.stats.get('faiss_failures', 0) + 1
+            
+            # Step 3: Apply temporal ensemble voting
+            voting_result = None
+            if neighbors:
+                try:
+                    voting_result = self.voting_module.vote(
+                        initial_prediction,
+                        neighbors,
+                        strategy=self.config.get('voting_strategy', 'weighted')
+                    )
+                    metadata['voting_strategy'] = self.config.get('voting_strategy', 'weighted')
+                    metadata['voting_confidence'] = voting_result.confidence
+                except Exception as e:
+                    logger.error(f"Voting failed: {e}")
+                    metadata['voting_failure'] = str(e)
+            
+            # Fallback if voting failed
+            if voting_result is None:
+                from types import SimpleNamespace
+                voting_result = SimpleNamespace(
+                    final_answer=initial_prediction.get('answer', initial_prediction) if isinstance(initial_prediction, dict) else initial_prediction,
+                    confidence=initial_prediction.get('confidence', 0.5) if isinstance(initial_prediction, dict) else 0.5,
+                    provenance={'source': 'direct_model', 'fallback': True}
+                )
+            
+            # Task 003 (Phase 2 Round 6): Check for read-only mode
+            if self.read_only_mode:
+                logger.debug("Read-only mode active - skipping all updates and learning")
+                metadata['read_only'] = True
+                metadata['update_path'] = 'disabled'
+                # Return response without any updates or storage
+                return (
+                    voting_result.final_answer,
+                    voting_result.confidence,
+                    {**voting_result.provenance, **metadata}
+                )
+            
+            # Step 4: Check confidence and potentially trigger update
+            update_triggered = False
+            if self._should_trigger_update(voting_result.confidence):
+                # Determine if this update should go through human review
+                if self._should_request_human_review():
+                    await self._enqueue_human_review_task(
+                        input_data,
+                        voting_result,
+                        initial_prediction
+                    )
+                    metadata['update_path'] = 'human_review'
+                else:
+                    await self._enqueue_update_task(
+                        input_data,
+                        voting_result,
+                        initial_prediction
+                    )
+                    metadata['update_path'] = 'automatic'
+                update_triggered = True
+            
+            # Step 5: Add to experience buffer for future use (only if not read-only)
+            if not self.read_only_mode:
+                await self._add_to_experience_buffer(
                     input_data,
                     voting_result,
                     initial_prediction
                 )
-            else:
-                await self._enqueue_update_task(
-                    input_data,
-                    voting_result,
-                    initial_prediction
-                )
-        
-        return (
-            voting_result.final_answer,
-            voting_result.confidence,
-            voting_result.provenance
-        )
+            
+            # Log comprehensive metrics
+            self._log_inference_metrics({
+                'mode': 'ensemble',
+                'buffer_size': buffer_size,
+                'confidence': voting_result.confidence,
+                'update_triggered': update_triggered,
+                'neighbors_used': len(neighbors),
+                'inference_time': time.time() - start_time,
+                'queue_sizes': self._get_queue_sizes()
+            })
+            
+            # Update metadata with timing
+            metadata['inference_time_ms'] = (time.time() - start_time) * 1000
+            
+            return (
+                voting_result.final_answer,
+                voting_result.confidence,
+                {**voting_result.provenance, **metadata}
+            )
+            
+        except Exception as e:
+            logger.error(f"Critical error in infer_and_adapt: {e}", exc_info=True)
+            # Track critical failures
+            with self.stats_lock:
+                self.stats['critical_failures'] = self.stats.get('critical_failures', 0) + 1
+            
+            # Return fallback response
+            return (
+                None,
+                0.0,
+                {'error': str(e), 'inference_path': 'error', **metadata}
+            )
     
     async def _get_model_prediction(
         self,
@@ -643,35 +797,146 @@ class InferenceEngine:
         )
         self.watchdog_thread.start()
         logger.info("Started watchdog thread")
+        
+        # Also start monitoring thread
+        self.start_monitoring()
     
     def _watchdog_loop(self):
         """
         Main watchdog loop that runs in a separate thread.
+        
+        Task 006: Implements supervisor functionality to automatically
+        restart the update worker process if it fails.
         """
+        consecutive_restart_failures = 0
+        max_restart_failures = 3
+        restart_cooldown = 5.0  # Seconds to wait before restart
+        
         while self.watchdog_running:
             try:
                 # Process cleanup confirmations
                 self._process_cleanup_confirmations()
                 
-                # Check worker health
+                # Check worker health (Task 006: Action 1)
                 worker_alive = (
                     self.update_worker_process is not None and 
                     self.update_worker_process.is_alive()
                 )
                 
-                # Clean up stale segments
-                cleaned = self.shm_manager.cleanup_stale_segments(worker_alive)
-                if cleaned:
-                    with self.stats_lock:
-                        self.stats['watchdog_cleanups'] += len(cleaned)
-                    logger.info(f"Watchdog cleaned {len(cleaned)} stale segments")
+                # Task 006: Action 2 - Implement restart mechanism
+                if not worker_alive and self.update_worker_process is not None:
+                    # Worker has died unexpectedly
+                    logger.critical(
+                        f"[Supervisor] Update worker process has terminated unexpectedly "
+                        f"(PID: {self.update_worker_process.pid}). Attempting to restart..."
+                    )
+                    
+                    # Send alert
+                    self.alerter.send_alert(
+                        severity=AlertSeverity.CRITICAL,
+                        component="supervisor",
+                        message="Update worker process died - initiating restart",
+                        details={
+                            'old_pid': self.update_worker_process.pid,
+                            'restart_attempt': consecutive_restart_failures + 1
+                        }
+                    )
+                    
+                    # Clean up stale segments from dead worker
+                    cleaned = self.shm_manager.cleanup_stale_segments(worker_alive=False)
+                    if cleaned:
+                        logger.info(f"[Supervisor] Cleaned {len(cleaned)} segments from dead worker")
+                    
+                    # Wait for cleanup to complete
+                    time.sleep(restart_cooldown)
+                    
+                    # Attempt to restart worker
+                    try:
+                        # Clear the old process reference
+                        self.update_worker_process = None
+                        
+                        # Start a new worker process
+                        self.start_update_worker()
+                        
+                        # Track successful restart
+                        with self.stats_lock:
+                            self.stats['worker_restarts'] = self.stats.get('worker_restarts', 0) + 1
+                        
+                        # Reset failure counter on successful restart
+                        consecutive_restart_failures = 0
+                        
+                        logger.info(
+                            f"[Supervisor] Successfully restarted update worker "
+                            f"(new PID: {self.update_worker_process.pid})"
+                        )
+                        
+                        # Send recovery alert
+                        self.alerter.send_alert(
+                            severity=AlertSeverity.INFO,
+                            component="supervisor",
+                            message="Update worker successfully restarted",
+                            details={'new_pid': self.update_worker_process.pid}
+                        )
+                        
+                        # Update monitoring metrics
+                        self.health_monitor.record_update()
+                        
+                    except Exception as e:
+                        consecutive_restart_failures += 1
+                        logger.error(
+                            f"[Supervisor] Failed to restart worker (attempt {consecutive_restart_failures}): {e}"
+                        )
+                        
+                        # Check if we've exceeded max restart attempts
+                        if consecutive_restart_failures >= max_restart_failures:
+                            logger.critical(
+                                f"[Supervisor] Max restart attempts ({max_restart_failures}) exceeded. "
+                                "Worker supervision suspended."
+                            )
+                            
+                            # Send emergency alert
+                            self.alerter.send_alert(
+                                severity=AlertSeverity.EMERGENCY,
+                                component="supervisor",
+                                message="Worker restart failed - manual intervention required",
+                                details={
+                                    'consecutive_failures': consecutive_restart_failures,
+                                    'error': str(e)
+                                }
+                            )
+                            
+                            # Suspend further restart attempts
+                            self.update_worker_process = None
+                            break
+                        
+                        # Exponential backoff for next retry
+                        time.sleep(restart_cooldown * (2 ** consecutive_restart_failures))
+                
+                elif worker_alive:
+                    # Worker is healthy, reset failure counter
+                    if consecutive_restart_failures > 0:
+                        logger.info("[Supervisor] Worker is healthy, resetting failure counter")
+                        consecutive_restart_failures = 0
+                    
+                    # Clean up any stale segments
+                    cleaned = self.shm_manager.cleanup_stale_segments(worker_alive)
+                    if cleaned:
+                        with self.stats_lock:
+                            self.stats['watchdog_cleanups'] += len(cleaned)
+                        logger.debug(f"Watchdog cleaned {len(cleaned)} stale segments")
                 
                 # Log status periodically
                 if self.stats['total_requests'] % 100 == 0 and self.stats['total_requests'] > 0:
                     self._log_status()
                 
+                # Task 006: Action 3 - Track restart metrics for chaos test validation
+                with self.stats_lock:
+                    # Update worker health status
+                    self.stats['worker_alive'] = worker_alive
+                    self.stats['consecutive_restart_failures'] = consecutive_restart_failures
+                
             except Exception as e:
-                logger.error(f"Error in watchdog loop: {e}")
+                logger.error(f"Error in watchdog loop: {e}", exc_info=True)
             
             # Sleep before next iteration
             time.sleep(self.watchdog_interval)
@@ -961,3 +1226,345 @@ class InferenceEngine:
             # Discard the task
             with self.stats_lock:
                 self.stats['human_rejections'] = self.stats.get('human_rejections', 0) + 1
+    
+    async def _add_bootstrap_experience(
+        self,
+        input_data: Dict[str, Any],
+        initial_prediction: Dict[str, Any]
+    ):
+        """
+        Add experience to buffer during cold start with high priority.
+        
+        During cold start, we rapidly build memory by adding all experiences
+        with high initial priority to bootstrap the system.
+        
+        Args:
+            input_data: Original input data
+            initial_prediction: Model's initial prediction
+        """
+        from ..data_structures import Experience, Trajectory
+        
+        try:
+            # Task 002 (Phase 2 Round 6): Anonymize text data before storage
+            anonymized_question = input_data.get('question', "")
+            if anonymized_question:
+                anonymized_question, _ = self.data_anonymizer.pii_redactor.redact_text(anonymized_question)
+            
+            # Create trajectory from prediction if available
+            trajectory = Trajectory()
+            if isinstance(initial_prediction, dict) and 'trajectory' in initial_prediction:
+                trajectory = initial_prediction['trajectory']
+            
+            # Create experience with anonymized data
+            experience = Experience(
+                experience_id="",  # Will be auto-generated
+                image_features=input_data.get('image_features'),  # Already processed, no PII
+                question_text=anonymized_question,  # Redacted text
+                trajectory=trajectory,
+                model_confidence=initial_prediction.get('confidence', 0.5) if isinstance(initial_prediction, dict) else 0.5,
+                metadata={
+                    'cold_start': True,
+                    'timestamp': datetime.now().isoformat(),
+                    '_anonymized': True
+                }
+            )
+            
+            # Add to buffer with high initial priority (for rapid memory building)
+            self.experience_buffer.add(
+                experience,
+                initial_priority=0.9  # High priority for bootstrap experiences
+            )
+            
+            logger.debug("Added anonymized bootstrap experience to buffer")
+            
+        except Exception as e:
+            logger.error(f"Failed to add bootstrap experience: {e}")
+    
+    async def _add_to_experience_buffer(
+        self,
+        input_data: Dict[str, Any],
+        voting_result: Any,
+        initial_prediction: Dict[str, Any]
+    ):
+        """
+        Add experience to buffer for future retrieval.
+        
+        Args:
+            input_data: Original input data
+            voting_result: Result from voting module
+            initial_prediction: Initial model prediction
+        """
+        from ..data_structures import Experience, Trajectory
+        
+        try:
+            # Task 002 (Phase 2 Round 6): Anonymize all text data before storage
+            anonymized_question = input_data.get('question', "")
+            if anonymized_question:
+                anonymized_question, redaction_stats = self.data_anonymizer.pii_redactor.redact_text(anonymized_question)
+                
+                # Log if PII was found and redacted
+                if redaction_stats:
+                    logger.info(f"Redacted PII from question before storage: {redaction_stats}")
+            
+            # Extract trajectory
+            trajectory = Trajectory()
+            if hasattr(voting_result, 'final_answer'):
+                if isinstance(voting_result.final_answer, dict) and 'trajectory' in voting_result.final_answer:
+                    trajectory = voting_result.final_answer['trajectory']
+            
+            # Strip any image metadata if present
+            image_features = input_data.get('image_features')
+            # Note: Image features are typically tensors, not raw images, so metadata stripping may not apply
+            # But we ensure no raw images with EXIF data are stored
+            
+            # Create experience with anonymized data
+            experience = Experience(
+                experience_id="",  # Will be auto-generated
+                image_features=image_features,  # Tensor data, no PII
+                question_text=anonymized_question,  # Redacted text
+                trajectory=trajectory,
+                model_confidence=voting_result.confidence,
+                metadata={
+                    'voting_confidence': voting_result.confidence,
+                    'timestamp': datetime.now().isoformat(),
+                    '_anonymized': True,
+                    '_pii_redacted': bool(redaction_stats) if 'redaction_stats' in locals() else False
+                }
+            )
+            
+            # Calculate priority based on confidence and uncertainty
+            # Higher uncertainty = higher priority for learning
+            uncertainty = 1.0 - voting_result.confidence
+            priority = uncertainty * 0.5 + 0.25  # Range: 0.25 to 0.75
+            
+            # Add to buffer
+            self.experience_buffer.add(experience, initial_priority=priority)
+            
+            logger.debug(f"Added anonymized experience to buffer with priority {priority:.3f}")
+            
+        except Exception as e:
+            logger.error(f"Failed to add experience to buffer: {e}")
+    
+    def _log_inference_metrics(self, metrics: Dict[str, Any]):
+        """
+        Log comprehensive inference metrics for monitoring.
+        
+        Args:
+            metrics: Dictionary of metrics to log
+        """
+        try:
+            # Update internal statistics
+            with self.stats_lock:
+                # Update running averages
+                if 'confidence' in metrics:
+                    current_avg = self.stats.get('avg_confidence', 0.5)
+                    self.stats['avg_confidence'] = 0.95 * current_avg + 0.05 * metrics['confidence']
+                
+                if 'inference_time' in metrics:
+                    current_avg = self.stats.get('avg_inference_time', 0.0)
+                    self.stats['avg_inference_time'] = 0.95 * current_avg + 0.05 * metrics['inference_time']
+                
+                # Track mode distribution
+                mode = metrics.get('mode', 'unknown')
+                mode_key = f'mode_{mode}_count'
+                self.stats[mode_key] = self.stats.get(mode_key, 0) + 1
+            
+            # Log to external monitoring system (e.g., wandb)
+            if self.config.get('enable_wandb_logging', False):
+                try:
+                    import wandb
+                    wandb.log(metrics)
+                except ImportError:
+                    pass
+            
+            # Log critical metrics at INFO level for visibility
+            if metrics.get('mode') == 'cold_start':
+                logger.info(f"Cold start inference: buffer_size={metrics.get('buffer_size', 0)}")
+            
+            # Check for anomalies
+            if metrics.get('inference_time', 0) > 1.0:  # More than 1 second
+                logger.warning(f"Slow inference detected: {metrics.get('inference_time', 0):.3f}s")
+            
+        except Exception as e:
+            logger.error(f"Failed to log inference metrics: {e}")
+    
+    def _get_queue_sizes(self) -> Dict[str, int]:
+        """
+        Get current sizes of all queues for monitoring.
+        
+        Returns:
+            Dictionary mapping queue names to their current sizes
+        """
+        sizes = {}
+        
+        try:
+            # Check each queue's approximate size
+            # Note: qsize() may raise NotImplementedError on some platforms
+            if hasattr(self.request_queue, 'qsize'):
+                try:
+                    sizes['request_queue'] = self.request_queue.qsize()
+                except NotImplementedError:
+                    sizes['request_queue'] = -1
+            
+            if hasattr(self.response_queue, 'qsize'):
+                try:
+                    sizes['response_queue'] = self.response_queue.qsize()
+                except NotImplementedError:
+                    sizes['response_queue'] = -1
+            
+            if hasattr(self.update_queue, 'qsize'):
+                try:
+                    sizes['update_queue'] = self.update_queue.qsize()
+                except NotImplementedError:
+                    sizes['update_queue'] = -1
+            
+            if hasattr(self.human_review_queue, 'qsize'):
+                try:
+                    sizes['human_review_queue'] = self.human_review_queue.qsize()
+                except NotImplementedError:
+                    sizes['human_review_queue'] = -1
+            
+        except Exception as e:
+            logger.debug(f"Could not get queue sizes: {e}")
+        
+        return sizes
+    
+    def start_monitoring(self):
+        """
+        Start the health monitoring thread.
+        """
+        if self.monitoring_thread is not None and self.monitoring_thread.is_alive():
+            logger.warning("Monitoring already running")
+            return
+        
+        self.monitoring_running = True
+        self.monitoring_thread = threading.Thread(
+            target=self._monitoring_loop,
+            daemon=True
+        )
+        self.monitoring_thread.start()
+        logger.info("Started monitoring thread")
+    
+    def _monitoring_loop(self):
+        """
+        Main monitoring loop that tracks health indicators and sends alerts.
+        """
+        import psutil
+        
+        while self.monitoring_running:
+            try:
+                # Collect health metrics
+                metrics = {}
+                
+                # Calculate update rate (updates per minute)
+                with self.stats_lock:
+                    # Track update rate - simplified for now
+                    # In production, would track time-based rate
+                    metrics['update_rate'] = self.stats.get('update_rate', 0.0)
+                    
+                    # Calculate FAISS failure rate
+                    total_faiss = self.stats.get('faiss_attempts', 0)
+                    if total_faiss > 0:
+                        metrics['faiss_failure_rate'] = self.stats.get('faiss_failures', 0) / total_faiss
+                    else:
+                        metrics['faiss_failure_rate'] = 0.0
+                
+                # Get queue sizes
+                queue_sizes = self._get_queue_sizes()
+                metrics['queue_sizes'] = queue_sizes
+                
+                # Check for growing queues
+                update_queue_size = queue_sizes.get('update_queue', 0)
+                if update_queue_size > 0:
+                    metrics['queue_size'] = update_queue_size
+                
+                # Get memory usage
+                try:
+                    process = psutil.Process()
+                    memory_info = process.memory_info()
+                    memory_percent = process.memory_percent()
+                    metrics['memory_usage_ratio'] = memory_percent / 100.0
+                    metrics['memory_rss_mb'] = memory_info.rss / (1024 * 1024)
+                except Exception as e:
+                    logger.debug(f"Could not get memory info: {e}")
+                
+                # Get mean KL divergence from worker if available
+                if hasattr(self, 'update_worker_process') and self.update_worker_process:
+                    # This would be retrieved from shared state or worker stats
+                    # For now, use a placeholder
+                    metrics['mean_kl_divergence'] = self.stats.get('mean_kl_divergence', 0.0)
+                
+                # Calculate inference latency percentiles
+                if hasattr(self, 'inference_times'):
+                    if len(self.inference_times) > 0:
+                        metrics['inference_latency_p99'] = np.percentile(self.inference_times, 99)
+                        metrics['inference_latency_p95'] = np.percentile(self.inference_times, 95)
+                        metrics['inference_latency_p50'] = np.percentile(self.inference_times, 50)
+                
+                # Update health monitor
+                self.health_monitor.update_metrics(metrics, component="inference_engine")
+                
+                # Log to wandb if enabled
+                if self.config.get('enable_wandb_logging', False):
+                    try:
+                        import wandb
+                        wandb.log({
+                            'health/update_rate': metrics.get('update_rate', 0),
+                            'health/faiss_failure_rate': metrics.get('faiss_failure_rate', 0),
+                            'health/mean_kl': metrics.get('mean_kl_divergence', 0),
+                            'health/memory_usage_ratio': metrics.get('memory_usage_ratio', 0),
+                            'health/update_queue_size': update_queue_size
+                        })
+                    except ImportError:
+                        pass
+                
+                # Check for critical conditions
+                self._check_critical_conditions(metrics)
+                
+            except Exception as e:
+                logger.error(f"Error in monitoring loop: {e}", exc_info=True)
+            
+            # Sleep before next iteration
+            time.sleep(self.monitoring_interval)
+    
+    def _check_critical_conditions(self, metrics: Dict[str, Any]):
+        """
+        Check for critical system conditions that require immediate alerts.
+        
+        Args:
+            metrics: Current health metrics
+        """
+        # Check if update worker is dead
+        if self.update_worker_process and not self.update_worker_process.is_alive():
+            self.alerter.send_alert(
+                severity=AlertSeverity.CRITICAL,
+                component="inference_engine",
+                message="Update worker process is dead",
+                details={'pid': self.update_worker_process.pid if self.update_worker_process else None}
+            )
+        
+        # Check for sustained high queue size
+        update_queue_size = metrics.get('queue_sizes', {}).get('update_queue', 0)
+        if update_queue_size > self.config.get('max_queue_size', 1000) * 0.95:
+            self.alerter.send_alert(
+                severity=AlertSeverity.EMERGENCY,
+                component="inference_engine",
+                message="Update queue near capacity - system may deadlock",
+                details={'queue_size': update_queue_size, 'max_size': self.config.get('max_queue_size', 1000)}
+            )
+        
+        # Check for memory pressure
+        if metrics.get('memory_usage_ratio', 0) > 0.95:
+            self.alerter.send_alert(
+                severity=AlertSeverity.EMERGENCY,
+                component="inference_engine",
+                message="Critical memory pressure detected",
+                details={'memory_usage': f"{metrics.get('memory_usage_ratio', 0) * 100:.1f}%"}
+            )
+    
+    def record_model_update(self):
+        """Record that a model update was performed."""
+        self.health_monitor.record_update()
+        with self.stats_lock:
+            # Simple rate tracking - in production would use time windows
+            self.stats['update_rate'] = self.stats.get('update_rate', 0) + 0.1

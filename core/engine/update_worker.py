@@ -32,6 +32,7 @@ import sys
 
 from ..data_structures import UpdateTask, Experience, RewardComponents
 from ..modules.reward_shaping import RewardOrchestrator
+from ..modules.audit import AuditLogger, AuditEventType, AuditResult, audit_log
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,13 @@ class UpdateWorker:
         # Logging
         self.update_log_path = self.model_save_path / "update_audit.log"
         self.contribution_log_path = self.model_save_path / "update_contribution.jsonl"
+        
+        # Initialize audit logger
+        self.audit_logger = AuditLogger(
+            audit_dir=str(self.model_save_path / "audit"),
+            retention_days=config.get('audit_retention_days', 365),
+            enable_async=True
+        )
         
         # Initialize logs
         self._init_logs()
@@ -410,6 +418,21 @@ class UpdateWorker:
                     f"({self.kl_config.target_kl * 2:.4f}), skipping update"
                 )
                 self.stats['failed_updates'] += 1
+                
+                # Log failed update to audit trail
+                self.audit_logger.log(
+                    event_type=AuditEventType.MODEL_UPDATE,
+                    actor=f"update_worker_{os.getpid()}",
+                    action="apply_online_update",
+                    resource=f"model_v{self.model_version}",
+                    result=AuditResult.BLOCKED,
+                    metadata={
+                        'task_id': task.task_id,
+                        'reason': 'kl_divergence_exceeded',
+                        'kl_divergence': kl_div.item(),
+                        'kl_limit': self.kl_config.target_kl * 2
+                    }
+                )
                 return
             
             # Backward pass
@@ -577,20 +600,54 @@ class UpdateWorker:
         
         if mean_kl > target_kl + tolerance:
             # KL too high - increase beta to constrain more
+            old_beta = self.current_beta
             new_beta = self.current_beta * self.kl_config.beta_increase_factor
             self.current_beta = min(new_beta, self.kl_config.max_beta)
             logger.debug(
                 f"Increased beta: {self.current_beta:.6f} "
                 f"(mean_kl={mean_kl:.4f} > {target_kl + tolerance:.4f})"
             )
+            
+            # Log beta adjustment to audit trail
+            self.audit_logger.log(
+                event_type=AuditEventType.CONFIG_CHANGE,
+                actor=f"update_worker_{os.getpid()}",
+                action="adjust_kl_beta",
+                resource="kl_penalty_coefficient",
+                result=AuditResult.SUCCESS,
+                metadata={
+                    'old_beta': old_beta,
+                    'new_beta': self.current_beta,
+                    'reason': 'kl_too_high',
+                    'mean_kl': mean_kl,
+                    'target_kl': target_kl
+                }
+            )
         
         elif mean_kl < target_kl - tolerance:
             # KL too low - decrease beta to allow more learning
+            old_beta = self.current_beta
             new_beta = self.current_beta / self.kl_config.beta_decrease_factor
             self.current_beta = max(new_beta, self.kl_config.min_beta)
             logger.debug(
                 f"Decreased beta: {self.current_beta:.6f} "
                 f"(mean_kl={mean_kl:.4f} < {target_kl - tolerance:.4f})"
+            )
+            
+            # Log beta adjustment to audit trail
+            self.audit_logger.log(
+                event_type=AuditEventType.CONFIG_CHANGE,
+                actor=f"update_worker_{os.getpid()}",
+                action="adjust_kl_beta",
+                resource="kl_penalty_coefficient",
+                result=AuditResult.SUCCESS,
+                metadata={
+                    'old_beta': old_beta,
+                    'new_beta': self.current_beta,
+                    'reason': 'kl_too_low',
+                    'mean_kl': mean_kl,
+                    'target_kl': target_kl
+                }
             )
         
         # Update stats
@@ -683,6 +740,9 @@ class UpdateWorker:
         """
         Log update details for audit and analysis.
         
+        Uses comprehensive audit logging with cryptographic hash chain
+        for tamper-proof audit trail.
+        
         Args:
             task: Update task
             rl_loss: RL loss value
@@ -691,7 +751,50 @@ class UpdateWorker:
             grad_norm: Gradient norm
             duration: Processing duration
         """
-        # Audit log entry
+        # Create comprehensive metadata
+        audit_metadata = {
+            'task_id': task.task_id,
+            'experience_id': task.experience.experience_id,
+            'model_confidence': task.experience.model_confidence,
+            'learning_rate': task.learning_rate,
+            'losses': {
+                'rl_loss': rl_loss,
+                'kl_divergence': kl_div,
+                'total_loss': total_loss
+            },
+            'gradients': {
+                'norm': grad_norm,
+                'clipped': grad_norm > self.gradient_clip_norm
+            },
+            'kl_control': {
+                'current_beta': self.current_beta,
+                'mean_kl': self.stats['mean_kl'],
+                'target_kl': self.kl_config.target_kl
+            },
+            'reward_components': {
+                'task_reward': float(task.reward_tensor[0]) if isinstance(task.reward_tensor, torch.Tensor) and len(task.reward_tensor) > 0 else 0.0,
+                'curiosity_reward': float(task.reward_tensor[1]) if isinstance(task.reward_tensor, torch.Tensor) and len(task.reward_tensor) > 1 else 0.0,
+                'coherence_reward': float(task.reward_tensor[2]) if isinstance(task.reward_tensor, torch.Tensor) and len(task.reward_tensor) > 2 else 0.0,
+                'tool_penalty': float(task.reward_tensor[3]) if isinstance(task.reward_tensor, torch.Tensor) and len(task.reward_tensor) > 3 else 0.0,
+                'total_reward': float(task.reward_tensor[-1]) if isinstance(task.reward_tensor, torch.Tensor) and len(task.reward_tensor) > 0 else 0.0
+            },
+            'duration_seconds': duration,
+            'update_number': self.stats['total_updates'],
+            'model_version': self.model_version
+        }
+        
+        # Log to audit trail with cryptographic hash chain
+        self.audit_logger.log(
+            event_type=AuditEventType.MODEL_UPDATE,
+            actor=f"update_worker_{os.getpid()}",
+            action="apply_online_update",
+            resource=f"model_v{self.model_version}",
+            result=AuditResult.SUCCESS,
+            metadata=audit_metadata
+        )
+        
+        # Also maintain legacy logs for backward compatibility
+        # Simple text audit log
         audit_entry = (
             f"{datetime.now().isoformat()} | "
             f"Task: {task.task_id} | "
@@ -770,6 +873,32 @@ class UpdateWorker:
                     'final_beta': self.current_beta,
                     'timestamp': datetime.now().isoformat()
                 }, f, indent=2)
+            
+            # Log shutdown to audit trail
+            self.audit_logger.log(
+                event_type=AuditEventType.SYSTEM_ERROR,
+                actor=f"update_worker_{os.getpid()}",
+                action="shutdown",
+                resource="update_worker",
+                result=AuditResult.SUCCESS,
+                metadata={
+                    'total_updates': self.stats['total_updates'],
+                    'successful_updates': self.stats['successful_updates'],
+                    'failed_updates': self.stats['failed_updates'],
+                    'final_beta': self.current_beta,
+                    'model_version': self.model_version
+                }
+            )
+            
+            # Verify audit log integrity before shutdown
+            verification_result = self.audit_logger.verify_integrity()
+            if not verification_result['valid']:
+                logger.error(f"Audit log integrity check failed: {verification_result['errors']}")
+            else:
+                logger.info(f"Audit log integrity verified: {verification_result['total_entries']} entries")
+            
+            # Shutdown audit logger
+            self.audit_logger.shutdown()
             
             logger.info(f"Update worker cleanup complete. Total updates: {self.stats['total_updates']}")
         

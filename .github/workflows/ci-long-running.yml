@@ -1,0 +1,386 @@
+name: Long-Running Stability Test
+
+on:
+  # Run nightly at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * *'
+  
+  # Allow manual triggering
+  workflow_dispatch:
+    inputs:
+      duration_hours:
+        description: 'Test duration in hours'
+        required: false
+        default: '8'
+      enable_chaos:
+        description: 'Enable chaos testing (worker crashes)'
+        required: false
+        default: 'true'
+      request_rate:
+        description: 'Requests per second'
+        required: false
+        default: '50'
+
+env:
+  PYTHON_VERSION: '3.10'
+  CACHE_NUMBER: 1  # Increment to reset cache
+
+jobs:
+  stability-test:
+    name: Long-Running Stability Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 540  # 9 hours timeout (8 hours test + 1 hour buffer)
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Cache dependencies
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/pip
+          ~/.cache/torch
+        key: ${{ runner.os }}-pip-${{ env.CACHE_NUMBER }}-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-${{ env.CACHE_NUMBER }}-
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          build-essential \
+          libopenblas-dev \
+          liblapack-dev \
+          libhdf5-dev \
+          graphviz
+    
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+        pip install numpy scipy scikit-learn
+        pip install psutil wandb faiss-cpu
+        pip install pytest pytest-asyncio pytest-timeout
+        
+        # Install project dependencies if requirements.txt exists
+        if [ -f requirements.txt ]; then
+          pip install -r requirements.txt
+        fi
+    
+    - name: Set up WandB (optional)
+      env:
+        WANDB_API_KEY: ${{ secrets.WANDB_API_KEY }}
+      run: |
+        if [ -n "$WANDB_API_KEY" ]; then
+          wandb login
+          echo "WandB configured"
+        else
+          echo "WandB API key not found, running without WandB"
+          export WANDB_MODE=offline
+        fi
+    
+    - name: System information
+      run: |
+        echo "=== System Information ==="
+        uname -a
+        echo "=== CPU Information ==="
+        lscpu
+        echo "=== Memory Information ==="
+        free -h
+        echo "=== Disk Information ==="
+        df -h
+        echo "=== Python Information ==="
+        python --version
+        pip list
+    
+    - name: Run stability test
+      id: stability_test
+      env:
+        PYTHONPATH: ${{ github.workspace }}
+        DURATION_HOURS: ${{ github.event.inputs.duration_hours || '8' }}
+        ENABLE_CHAOS: ${{ github.event.inputs.enable_chaos || 'true' }}
+        REQUEST_RATE: ${{ github.event.inputs.request_rate || '50' }}
+      run: |
+        echo "Starting long-running stability test..."
+        echo "Duration: ${DURATION_HOURS} hours"
+        echo "Chaos testing: ${ENABLE_CHAOS}"
+        echo "Request rate: ${REQUEST_RATE} req/s"
+        
+        # Create results directory
+        mkdir -p simulation_results
+        
+        # Run the simulation
+        if [ "$ENABLE_CHAOS" = "true" ]; then
+          CHAOS_FLAG="--enable-chaos"
+        else
+          CHAOS_FLAG=""
+        fi
+        
+        python scripts/run_online_simulation.py \
+          --duration ${DURATION_HOURS} \
+          --request-rate ${REQUEST_RATE} \
+          ${CHAOS_FLAG} \
+          --worker-crash-probability 0.005 \
+          --monitoring-interval 30 \
+          --memory-leak-threshold 1.15 \
+          --queue-growth-threshold 500 \
+          --output-dir simulation_results
+        
+        # Capture exit code
+        TEST_EXIT_CODE=$?
+        echo "test_exit_code=${TEST_EXIT_CODE}" >> $GITHUB_OUTPUT
+        
+        # Display results
+        echo "=== Test Results ==="
+        ls -la simulation_results/
+        
+        # Show the latest result file
+        LATEST_RESULT=$(ls -t simulation_results/*.json | head -1)
+        if [ -f "$LATEST_RESULT" ]; then
+          echo "Latest result: $LATEST_RESULT"
+          cat "$LATEST_RESULT" | python -m json.tool
+        fi
+        
+        exit ${TEST_EXIT_CODE}
+    
+    - name: Analyze memory profile
+      if: always()
+      run: |
+        echo "=== Memory Analysis ==="
+        
+        # Check for memory leaks in results
+        LATEST_RESULT=$(ls -t simulation_results/*.json 2>/dev/null | head -1)
+        if [ -f "$LATEST_RESULT" ]; then
+          python -c "
+import json
+import sys
+
+with open('$LATEST_RESULT', 'r') as f:
+    data = json.load(f)
+    
+metrics = data.get('metrics', {})
+memory = metrics.get('memory', {})
+growth_ratio = memory.get('growth_ratio', 1.0)
+
+print(f'Initial memory: {memory.get(\"initial_mb\", 0):.1f} MB')
+print(f'Peak memory: {memory.get(\"peak_mb\", 0):.1f} MB')
+print(f'Final memory: {memory.get(\"final_mb\", 0):.1f} MB')
+print(f'Growth ratio: {growth_ratio:.2f}x')
+
+if growth_ratio > 1.15:
+    print('⚠️  WARNING: Potential memory leak detected!')
+    sys.exit(1)
+else:
+    print('✅ Memory usage within acceptable limits')
+"
+        fi
+    
+    - name: Check queue stability
+      if: always()
+      run: |
+        echo "=== Queue Stability Analysis ==="
+        
+        LATEST_RESULT=$(ls -t simulation_results/*.json 2>/dev/null | head -1)
+        if [ -f "$LATEST_RESULT" ]; then
+          python -c "
+import json
+import sys
+
+with open('$LATEST_RESULT', 'r') as f:
+    data = json.load(f)
+    
+metrics = data.get('metrics', {})
+max_queue = metrics.get('max_queue_size', 0)
+
+print(f'Maximum queue size: {max_queue}')
+
+if max_queue > 500:
+    print('⚠️  WARNING: Queue growth detected!')
+    sys.exit(1)
+else:
+    print('✅ Queue size remained bounded')
+"
+        fi
+    
+    - name: Verify fault recovery
+      if: github.event.inputs.enable_chaos == 'true' || github.event.schedule
+      run: |
+        echo "=== Fault Recovery Analysis ==="
+        
+        LATEST_RESULT=$(ls -t simulation_results/*.json 2>/dev/null | head -1)
+        if [ -f "$LATEST_RESULT" ]; then
+          python -c "
+import json
+import sys
+
+with open('$LATEST_RESULT', 'r') as f:
+    data = json.load(f)
+    
+metrics = data.get('metrics', {})
+crashes = metrics.get('worker_crashes', 0)
+restarts = metrics.get('worker_restarts', 0)
+
+print(f'Worker crashes injected: {crashes}')
+print(f'Successful restarts: {restarts}')
+
+if crashes > 0 and crashes != restarts:
+    print('❌ FAILURE: Not all crashed workers were recovered!')
+    print(f'Recovery rate: {restarts}/{crashes} = {restarts/max(crashes,1)*100:.1f}%')
+    sys.exit(1)
+elif crashes > 0:
+    print('✅ All crashed workers successfully recovered')
+else:
+    print('ℹ️  No worker crashes occurred during test')
+"
+        fi
+    
+    - name: Upload results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: stability-test-results-${{ github.run_number }}
+        path: simulation_results/
+        retention-days: 30
+    
+    - name: Create summary
+      if: always()
+      run: |
+        echo "## Long-Running Stability Test Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        LATEST_RESULT=$(ls -t simulation_results/*.json 2>/dev/null | head -1)
+        if [ -f "$LATEST_RESULT" ]; then
+          python -c "
+import json
+import sys
+
+with open('$LATEST_RESULT', 'r') as f:
+    data = json.load(f)
+
+metrics = data.get('metrics', {})
+validations = data.get('validations', {})
+config = data.get('config', {})
+
+# Configuration
+print('### Configuration')
+print(f\"- Duration: {config.get('duration_hours', 0)} hours\")
+print(f\"- Request rate: {config.get('request_rate', 0)} req/s\")
+print(f\"- Chaos testing: {'Enabled' if config.get('enable_chaos') else 'Disabled'}\")
+print()
+
+# Performance metrics
+print('### Performance Metrics')
+print(f\"- Total requests: {metrics.get('total_requests', 0):,}\")
+print(f\"- Success rate: {metrics.get('success_rate', 0):.2%}\")
+print(f\"- Update rate: {metrics.get('update_rate', 0):.2f} updates/min\")
+print()
+
+# Inference latency
+inference = metrics.get('inference', {})
+print('### Inference Latency')
+print(f\"- Mean: {inference.get('mean_time_ms', 0):.1f}ms\")
+print(f\"- P50: {inference.get('p50_time_ms', 0):.1f}ms\")
+print(f\"- P95: {inference.get('p95_time_ms', 0):.1f}ms\")
+print(f\"- P99: {inference.get('p99_time_ms', 0):.1f}ms\")
+print()
+
+# Memory usage
+memory = metrics.get('memory', {})
+print('### Memory Usage')
+print(f\"- Initial: {memory.get('initial_mb', 0):.1f} MB\")
+print(f\"- Peak: {memory.get('peak_mb', 0):.1f} MB\")
+print(f\"- Final: {memory.get('final_mb', 0):.1f} MB\")
+print(f\"- Growth ratio: {memory.get('growth_ratio', 1):.2f}x\")
+print()
+
+# Fault recovery (if applicable)
+if config.get('enable_chaos'):
+    print('### Fault Recovery')
+    print(f\"- Worker crashes: {metrics.get('worker_crashes', 0)}\")
+    print(f\"- Worker restarts: {metrics.get('worker_restarts', 0)}\")
+    print()
+
+# Validation results
+print('### Validation Results')
+for check, passed in validations.items():
+    if check != 'overall':
+        status = '✅' if passed else '❌'
+        print(f\"- {check}: {status}\")
+
+print()
+overall = validations.get('overall', False)
+if overall:
+    print('### ✅ All validation checks PASSED')
+else:
+    print('### ❌ Some validation checks FAILED')
+" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "No results file found" >> $GITHUB_STEP_SUMMARY
+        fi
+    
+    - name: Post to Slack (optional)
+      if: always() && env.SLACK_WEBHOOK_URL
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      run: |
+        # Determine test status
+        if [ "${{ steps.stability_test.outputs.test_exit_code }}" = "0" ]; then
+          STATUS="✅ PASSED"
+          COLOR="good"
+        else
+          STATUS="❌ FAILED"
+          COLOR="danger"
+        fi
+        
+        # Send Slack notification
+        curl -X POST $SLACK_WEBHOOK_URL \
+          -H 'Content-Type: application/json' \
+          -d "{
+            \"text\": \"Long-Running Stability Test: ${STATUS}\",
+            \"attachments\": [{
+              \"color\": \"${COLOR}\",
+              \"fields\": [
+                {\"title\": \"Duration\", \"value\": \"${{ github.event.inputs.duration_hours || '8' }} hours\", \"short\": true},
+                {\"title\": \"Workflow\", \"value\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\", \"short\": false}
+              ]
+            }]
+          }"
+
+  cleanup:
+    name: Cleanup old artifacts
+    runs-on: ubuntu-latest
+    if: always()
+    needs: stability-test
+    
+    steps:
+    - name: Delete old artifacts
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const daysToKeep = 30;
+          const msPerDay = 24 * 60 * 60 * 1000;
+          const cutoffDate = new Date(Date.now() - (daysToKeep * msPerDay));
+          
+          const artifacts = await github.rest.actions.listArtifactsForRepo({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            per_page: 100
+          });
+          
+          for (const artifact of artifacts.data.artifacts) {
+            const createdAt = new Date(artifact.created_at);
+            if (createdAt < cutoffDate && artifact.name.startsWith('stability-test-results-')) {
+              console.log(`Deleting old artifact: ${artifact.name} (created: ${artifact.created_at})`);
+              await github.rest.actions.deleteArtifact({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                artifact_id: artifact.id
+              });
+            }
+          }
