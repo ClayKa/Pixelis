@@ -38,6 +38,7 @@ The script for training the model in ttrl and rft is not qwen2.5-VL 7B. Change i
 ## Listed Development Workflow
 
 Important!!!: When finish one task or one round, or even one phase, replace the ⚪ with the ✅.
+Everytime you finish a Round, you need to write a PHASEx_ROUNDx_SUMMARY.md. in docs/
 
 ### Phase 0: Project Initialization and Setup ✅
 
@@ -94,24 +95,24 @@ Important!!!: When finish one task or one round, or even one phase, replace the 
     - **Task 006: Estimate Total Experimental Cost** ✅
         - In the budget summary, calculate the total estimated GPU hours for the entire project, including all training phases, online simulations, and multi-seed experimental runs.
 
-- **Round 5: Establish Project-Wide Reproducibility and Artifact Management Protocol** ⚪
+- **Round 5: Establish Project-Wide Reproducibility and Artifact Management Protocol** ✅
     - See: `/tasks/Phase0Round5.md`
-    - **Task 001: Mandate Comprehensive Experiment Tracking and Artifact Versioning** ⚪
+    - **Task 001: Mandate Comprehensive Experiment Tracking and Artifact Versioning** ✅
         - Standardize on using WandB (Weights & Biases), specifically its Artifacts feature, to version and link every input and output of the experimental process.
-    - **Task 002: Implement Automatic Configuration and Environment Logging** ⚪
+    - **Task 002: Implement Automatic Configuration and Environment Logging** ✅
         - Modify training scripts to automatically save the exact Hydra configuration, `environment.yml`, and `requirements.txt` as WandB Artifacts at the start of every run.
-    - **Task 003: Implement Versioning for All Key Inputs and Outputs** ⚪
+    - **Task 003: Implement Versioning for All Key Inputs and Outputs** ✅
         - Modify all data processing, training, and evaluation scripts to consume and produce versioned WandB Artifacts for datasets, model checkpoints, and evaluation results.
-    - **Task 004: Document the Reproducibility Workflow** ⚪
+    - **Task 004: Document the Reproducibility Workflow** ✅
         - Document the end-to-end artifact-driven workflow, explaining how any result can be traced back to the exact code, environment, configuration, dataset, and model weights that produced it.
 
-- **Round 6: Establish Development Workflow and CI/CD Pipeline** ⚪
+- **Round 6: Establish Development Workflow and CI/CD Pipeline** ✅
     - See: `/tasks/Phase0Round6.md`
-    - **Task 001: Implement Pre-Commit Hooks for Code Quality** ⚪
+    - **Task 001: Implement Pre-Commit Hooks for Code Quality** ✅
         - Use the `pre-commit` framework to automatically run code formatters (`black`, `isort`), linters (`ruff`), and static type checkers (`mypy`) before any code is committed.
-    - **Task 002: Set Up a Continuous Integration (CI) Pipeline** ⚪
+    - **Task 002: Set Up a Continuous Integration (CI) Pipeline** ✅
         - Use GitHub Actions to create a CI workflow that automatically runs all pre-commit hooks and the entire test suite (`pytest`) on every new pull request to protect the main branch.
-    - **Task 003: Enforce a Test Coverage Threshold** ⚪
+    - **Task 003: Enforce a Test Coverage Threshold** ✅
         - Configure the CI pipeline to fail if the test coverage for the core application logic (`core/modules/` and `core/engine/`) drops below a 70% threshold.
 
 ### Phase 1: Offline Training ✅
@@ -182,7 +183,7 @@ Important!!!: When finish one task or one round, or even one phase, replace the 
     - **Task 007: Develop an Interactive Training Monitor** ✅
         - Create a real-time, interactive dashboard using `Gradio` or `Streamlit` that visualizes key training dynamics, such as the reward breakdown and tool usage frequencies, for intuitive monitoring.
 
-### Phase 2: Online Training (TTRL Evolution) ⚪
+### Phase 2: Online Training (TTRL Evolution) ✅
 
 - **Round 1: Asynchronous Architecture** ✅
     - See: `/tasks/Phase2Round1.md`
@@ -263,7 +264,7 @@ Important!!!: When finish one task or one round, or even one phase, replace the 
     - **Task 005: Implement Audit Trails** ✅
         - Configure the `update_worker` to maintain a separate, append-only log file (`update_audit.log`) that records key, non-sensitive metadata for every successful model update, providing a clear trail for security reviews.
 
-### Phase 3: Experiments, Evaluation, and Analysis ⚪
+### Phase 3: Experiments, Evaluation, and Analysis ✅
 
 - **Round 0: Establish Rigorous Experimental Protocol** ✅
     - See: `/tasks/Phase3Round0.md`
@@ -313,30 +314,30 @@ Important!!!: When finish one task or one round, or even one phase, replace the 
     - **Task 004: Analyze Results and Report Inter-Annotator Agreement** ✅
         - Collect all ratings, calculate a statistical measure of Inter-Annotator Agreement (e.g., Fleiss' Kappa), and use appropriate statistical tests to determine if observed differences are significant.
 
-- **Round 4: Inference Acceleration & Optimization** ⚪
+- **Round 4: Inference Acceleration & Optimization** ✅
     - See: `/tasks/Phase3Round4.md`
-    - **Task 001: Profile and Identify Bottlenecks** ⚪
+    - **Task 001: Profile and Identify Bottlenecks** ✅
         - Use `torch.profiler` to get a detailed performance breakdown of the entire inference pipeline, identifying the most computationally expensive components as targets for optimization.
-    - **Task 002: Apply Standard Optimizations** ⚪
+    - **Task 002: Apply Standard Optimizations** ✅
         - Accelerate the model using standard, state-of-the-art techniques including `torch.compile`, INT8 post-training quantization (PTQ), and enabling Flash Attention 2.
-    - **Task 003: Implement Service-Level Optimizations** ⚪
+    - **Task 003: Implement Service-Level Optimizations** ✅
         - For a high-throughput service architecture, implement features like dynamic batching and multi-level caching (LRU cache) to improve overall throughput and latency.
-    - **Task 004: Implement Task-Specific Optimizations** ⚪
+    - **Task 004: Implement Task-Specific Optimizations** ✅
         - Experiment with optimizations specific to the online loop, such as using an approximate k-NN index or caching reward computations for revisited states.
-    - **Task 005: (Optional) Export to a Dedicated Inference Engine** ⚪
+    - **Task 005: (Optional) Export to a Dedicated Inference Engine** ✅
         - For peak performance in a production environment, explore exporting the final, optimized inference graph to a specialized engine like ONNX Runtime or NVIDIA TensorRT.
 
-- **Round 5: Final Analysis, Reporting, and Packaging** ⚪
+- **Round 5: Final Analysis, Reporting, and Packaging** ✅
     - See: `/tasks/Phase3Round5.md`
-    - **Task 001: Conduct In-Depth Analysis of Logged Metrics** ⚪
+    - **Task 001: Conduct In-Depth Analysis of Logged Metrics** ✅
         - Perform a deep dive into the `wandb` logs from all experiments, creating plots that correlate reward signals with behavior and tell a compelling story about the learning process.
-    - **Task 002: Perform Qualitative Case Studies** ⚪
+    - **Task 002: Perform Qualitative Case Studies** ✅
         - Select compelling examples and create visualizations comparing the reasoning trajectories of different models to provide powerful, intuitive evidence of the framework's improvements.
-    - **Task 003: Perform Systematic Error Mode Analysis** ⚪
+    - **Task 003: Perform Systematic Error Mode Analysis** ✅
         - Use a combination of automated clustering on failure case embeddings and manual interpretation to discover, classify, and report on the system's common error patterns.
-    - **Task 004: Create an Interactive Public Demonstrator** ⚪
+    - **Task 004: Create an Interactive Public Demonstrator** ✅
         - Build and deploy a user-friendly public demo (e.g., on Hugging Face Spaces) that features a side-by-side comparison view, allowing the community to interact with the models and visualize their reasoning.
-    - **Task 005: Create Comprehensive Documentation** ⚪
+    - **Task 005: Create Comprehensive Documentation** ✅
         - Write and finalize all project documentation, including a detailed `ARCHITECTURE.md`, a `BENCHMARKS.md` with all key results, a helpful `TROUBLESHOOTING.md`, and a professionally generated API reference.
-    - **Task 006: Package for Release with Mandated Artifact Management** ⚪
+    - **Task 006: Package for Release with Mandated Artifact Management** ✅
         - Create a minimal, end-to-end "reproducibility kit" with a tiny dataset and pre-trained adapters, providing simple, copy-paste commands to allow other researchers to easily verify core results on consumer-grade hardware.
