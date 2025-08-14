@@ -11,6 +11,7 @@ Pixelis is a novel vision-language agent designed to reason directly within the 
 - 
 ## Development Context
 See @reference/ROADMAP.md for current status and next steps
+Important!!!: When finish one task or one round, or even one phase in the ROADMAP.md, replace the ⚪ with the ✅.
 
 ## Repository Structure
 

@@ -79,13 +79,17 @@ class TemporalEnsembleVoting:
         weights = []
         
         # Add initial prediction as a vote
+        model_self_answer = initial_prediction.get('answer')
         votes.append({
-            'answer': initial_prediction.get('answer'),
+            'answer': model_self_answer,
             'confidence': initial_prediction.get('confidence', 1.0),
             'source': 'initial_prediction',
             'trajectory': initial_prediction.get('trajectory', [])
         })
         weights.append(initial_prediction.get('confidence', 1.0))
+        
+        # Collect neighbor answers for provenance
+        neighbor_answers = []
         
         # Add neighbor votes
         for neighbor in neighbors:
@@ -101,26 +105,43 @@ class TemporalEnsembleVoting:
                 # Calculate weight based on various factors
                 weight = self._calculate_vote_weight(neighbor, initial_prediction)
                 weights.append(weight)
+                
+                # Add to neighbor answers for provenance
+                neighbor_answers.append({
+                    'experience_id': neighbor.experience_id,
+                    'answer': neighbor.trajectory.final_answer,
+                    'confidence': neighbor.model_confidence,
+                    'similarity_score': weight  # Using weight as proxy for similarity
+                })
         
         # Check if we have enough votes
         if len(votes) < self.min_votes_required:
             logger.warning(f"Insufficient votes: {len(votes)} < {self.min_votes_required}")
             # Return initial prediction with low confidence
             return VotingResult(
-                final_answer=initial_prediction.get('answer'),
+                final_answer=model_self_answer,
                 confidence=initial_prediction.get('confidence', 0.5) * 0.5,
-                votes=votes,
-                weights=weights,
                 provenance={
-                    'strategy': self.strategy,
+                    'model_self_answer': model_self_answer,
+                    'retrieved_neighbors_count': len(neighbors),
+                    'neighbor_answers': neighbor_answers,
+                    'voting_strategy': self.strategy,
                     'reason': 'insufficient_votes',
-                    'num_votes': len(votes)
+                    'num_votes': len(votes),
+                    'votes': votes,
+                    'weights': weights
                 }
             )
         
         # Apply voting strategy
         strategy_func = self.strategies[self.strategy]
-        result = strategy_func(votes, weights, **kwargs)
+        result = strategy_func(votes, weights, initial_prediction, neighbors, **kwargs)
+        
+        # Ensure result has proper provenance
+        result.provenance['model_self_answer'] = model_self_answer
+        result.provenance['retrieved_neighbors_count'] = len(neighbors)
+        result.provenance['neighbor_answers'] = neighbor_answers
+        result.provenance['voting_strategy'] = self.strategy
         
         return result
     
@@ -163,6 +184,8 @@ class TemporalEnsembleVoting:
         self,
         votes: List[Dict[str, Any]],
         weights: List[float],
+        initial_prediction: Dict[str, Any],
+        neighbors: List[Experience],
         **kwargs
     ) -> VotingResult:
         """
@@ -171,6 +194,8 @@ class TemporalEnsembleVoting:
         Args:
             votes: List of votes
             weights: Vote weights (ignored for majority)
+            initial_prediction: Initial model prediction
+            neighbors: List of neighbor experiences
             
         Returns:
             VotingResult
@@ -193,13 +218,12 @@ class TemporalEnsembleVoting:
         return VotingResult(
             final_answer=final_answer,
             confidence=confidence,
-            votes=votes,
-            weights=[1.0] * len(votes),  # Equal weights for majority voting
             provenance={
-                'strategy': 'majority',
                 'vote_distribution': dict(answer_counts),
                 'winning_votes': vote_count,
-                'total_votes': len(votes)
+                'total_votes': len(votes),
+                'votes': votes,
+                'weights': [1.0] * len(votes)  # Equal weights for majority voting
             }
         )
     
@@ -207,6 +231,8 @@ class TemporalEnsembleVoting:
         self,
         votes: List[Dict[str, Any]],
         weights: List[float],
+        initial_prediction: Dict[str, Any],
+        neighbors: List[Experience],
         **kwargs
     ) -> VotingResult:
         """
@@ -215,6 +241,8 @@ class TemporalEnsembleVoting:
         Args:
             votes: List of votes
             weights: Vote weights
+            initial_prediction: Initial model prediction
+            neighbors: List of neighbor experiences
             
         Returns:
             VotingResult
@@ -243,13 +271,12 @@ class TemporalEnsembleVoting:
         return VotingResult(
             final_answer=final_answer,
             confidence=confidence,
-            votes=votes,
-            weights=normalized_weights,
             provenance={
-                'strategy': 'weighted',
                 'answer_weights': answer_weights,
                 'agreement_factor': agreement_factor,
-                'effective_votes': sum(1 for v in votes if str(v['answer']) == final_answer)
+                'effective_votes': sum(1 for v in votes if str(v['answer']) == final_answer),
+                'votes': votes,
+                'weights': normalized_weights
             }
         )
     
@@ -257,6 +284,8 @@ class TemporalEnsembleVoting:
         self,
         votes: List[Dict[str, Any]],
         weights: List[float],
+        initial_prediction: Dict[str, Any],
+        neighbors: List[Experience],
         **kwargs
     ) -> VotingResult:
         """
@@ -265,6 +294,8 @@ class TemporalEnsembleVoting:
         Args:
             votes: List of votes
             weights: Vote weights
+            initial_prediction: Initial model prediction
+            neighbors: List of neighbor experiences
             
         Returns:
             VotingResult
@@ -284,22 +315,23 @@ class TemporalEnsembleVoting:
             return VotingResult(
                 final_answer=best_vote['answer'],
                 confidence=best_vote.get('confidence', 0.5) * 0.5,
-                votes=votes,
-                weights=weights,
                 provenance={
-                    'strategy': 'confidence',
                     'reason': 'no_confident_votes',
-                    'fallback': True
+                    'fallback': True,
+                    'votes': votes,
+                    'weights': weights
                 }
             )
         
         # Apply weighted voting on confident votes
-        return self._weighted_voting(confident_votes, confident_weights)
+        return self._weighted_voting(confident_votes, confident_weights, initial_prediction, neighbors)
     
     def _ensemble_voting(
         self,
         votes: List[Dict[str, Any]],
         weights: List[float],
+        initial_prediction: Dict[str, Any],
+        neighbors: List[Experience],
         **kwargs
     ) -> VotingResult:
         """
@@ -308,14 +340,16 @@ class TemporalEnsembleVoting:
         Args:
             votes: List of votes
             weights: Vote weights
+            initial_prediction: Initial model prediction
+            neighbors: List of neighbor experiences
             
         Returns:
             VotingResult
         """
         # Get results from different strategies
-        majority_result = self._majority_voting(votes, weights)
-        weighted_result = self._weighted_voting(votes, weights)
-        confidence_result = self._confidence_voting(votes, weights)
+        majority_result = self._majority_voting(votes, weights, initial_prediction, neighbors)
+        weighted_result = self._weighted_voting(votes, weights, initial_prediction, neighbors)
+        confidence_result = self._confidence_voting(votes, weights, initial_prediction, neighbors)
         
         # Combine results
         ensemble_votes = [
@@ -344,17 +378,16 @@ class TemporalEnsembleVoting:
         return VotingResult(
             final_answer=final_answer,
             confidence=confidence,
-            votes=votes,
-            weights=weights,
             provenance={
-                'strategy': 'ensemble',
                 'sub_strategies': {
                     'majority': majority_result.final_answer,
                     'weighted': weighted_result.final_answer,
                     'confidence': confidence_result.final_answer
                 },
                 'answer_scores': answer_scores,
-                'agreement': len(set(v['answer'] for v in ensemble_votes)) == 1
+                'agreement': len(set(v['answer'] for v in ensemble_votes)) == 1,
+                'votes': votes,
+                'weights': weights
             }
         )
     

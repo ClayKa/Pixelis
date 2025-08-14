@@ -228,6 +228,22 @@ class OnlineConfig:
     k_neighbors: int = 5
     similarity_metric: str = "cosine"  # cosine, euclidean, manhattan
     
+    # FAISS configuration
+    faiss_backend: str = "gpu"  # gpu, cpu
+    faiss_n_probes: int = 10  # For IVF index
+    faiss_use_gpu_fallback: bool = True  # Fallback to CPU if GPU fails
+    
+    # Persistence configuration
+    persistence_backend: str = "file"  # file, lmdb
+    persistence_path: str = "./experience_buffer"
+    enable_persistence: bool = True
+    snapshot_interval: int = 100  # Operations before snapshot
+    max_snapshots: int = 3  # Number of snapshots to keep
+    
+    # Hybrid embedding configuration
+    visual_weight: float = 0.7  # Weight for visual embedding
+    text_weight: float = 0.3  # Weight for text embedding
+    
     # Voting
     voting_strategy: VotingStrategy = VotingStrategy.WEIGHTED
     min_votes_required: int = 3
@@ -240,8 +256,13 @@ class OnlineConfig:
     # Safety mechanisms
     gradient_clip_norm: float = 1.0
     max_updates_per_minute: int = 60
-    enable_human_in_loop: bool = False
-    hil_sample_rate: float = 0.1
+    
+    # Human-in-the-Loop (HIL) configuration
+    hil_mode_enabled: bool = False  # Enable HIL mode
+    hil_review_percentage: float = 0.02  # Percentage of updates to review (2%)
+    hil_interface_host: str = "127.0.0.1"  # HIL interface host
+    hil_interface_port: int = 7860  # HIL interface port
+    hil_auto_approve_timeout: Optional[int] = None  # Auto-approve after timeout (seconds)
     
     def __post_init__(self):
         """Validate online configuration."""
@@ -253,6 +274,18 @@ class OnlineConfig:
         
         if self.buffer_size <= 0:
             raise ValueError("buffer_size must be positive")
+        
+        if self.visual_weight + self.text_weight != 1.0:
+            # Normalize weights if they don't sum to 1
+            total = self.visual_weight + self.text_weight
+            self.visual_weight /= total
+            self.text_weight /= total
+        
+        if self.faiss_backend not in ["gpu", "cpu"]:
+            raise ValueError("faiss_backend must be 'gpu' or 'cpu'")
+        
+        if self.persistence_backend not in ["file", "lmdb"]:
+            raise ValueError("persistence_backend must be 'file' or 'lmdb'")
 
 
 @dataclass

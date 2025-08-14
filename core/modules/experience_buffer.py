@@ -396,7 +396,8 @@ class ExperienceBuffer:
             if self.experience_dict:
                 confidences = [exp.model_confidence for exp in self.experience_dict.values()]
                 priorities = [exp.priority for exp in self.experience_dict.values()]
-                usage_counts = [exp.usage_count for exp in self.experience_dict.values()]
+                retrieval_counts = [exp.retrieval_count for exp in self.experience_dict.values()]
+                success_counts = [exp.success_count for exp in self.experience_dict.values()]
                 success_rates = [exp.success_rate for exp in self.experience_dict.values()]
                 
                 stats = {
@@ -407,7 +408,8 @@ class ExperienceBuffer:
                     "total_retrievals": self.total_retrievals,
                     "avg_confidence": np.mean(confidences),
                     "avg_priority": np.mean(priorities),
-                    "avg_usage_count": np.mean(usage_counts),
+                    "avg_retrieval_count": np.mean(retrieval_counts),
+                    "avg_success_count": np.mean(success_counts),
                     "avg_success_rate": np.mean(success_rates),
                     "index_size": self.index.ntotal
                 }

@@ -162,8 +162,8 @@ class Experience:
         status: Current status of the experience
         embeddings: Cached embeddings for similarity search
         priority: Priority score for sampling
-        usage_count: Number of times retrieved for voting
-        success_rate: Success rate when used for voting
+        retrieval_count: Number of times retrieved from buffer
+        success_count: Number of successful uses in voting
     """
     experience_id: str
     image_features: Union[torch.Tensor, np.ndarray]
@@ -174,8 +174,8 @@ class Experience:
     status: ExperienceStatus = ExperienceStatus.PENDING
     embeddings: Optional[Dict[str, torch.Tensor]] = None
     priority: float = 1.0
-    usage_count: int = 0
-    success_rate: float = 0.0
+    retrieval_count: int = 0
+    success_count: int = 0
     
     def __post_init__(self):
         """Validate experience data after initialization."""
@@ -215,10 +215,16 @@ class Experience:
         Args:
             was_successful: Whether the experience led to a successful prediction
         """
-        self.usage_count += 1
-        # Update success rate with exponential moving average
-        alpha = 0.1  # Learning rate for success rate
-        self.success_rate = (1 - alpha) * self.success_rate + alpha * float(was_successful)
+        self.retrieval_count += 1
+        if was_successful:
+            self.success_count += 1
+    
+    @property
+    def success_rate(self) -> float:
+        """Calculate success rate from counts."""
+        if self.retrieval_count == 0:
+            return 0.0
+        return self.success_count / self.retrieval_count
     
     def get_embedding(self, embedding_type: str = "combined") -> Optional[torch.Tensor]:
         """
@@ -256,8 +262,8 @@ class Experience:
             "timestamp": self.timestamp.isoformat(),
             "status": self.status.value,
             "priority": self.priority,
-            "usage_count": self.usage_count,
-            "success_rate": self.success_rate
+            "retrieval_count": self.retrieval_count,
+            "success_count": self.success_count
         }
     
     @classmethod
@@ -274,8 +280,8 @@ class Experience:
             status=ExperienceStatus(data["status"]),
             embeddings=None,  # Must be loaded separately
             priority=data.get("priority", 1.0),
-            usage_count=data.get("usage_count", 0),
-            success_rate=data.get("success_rate", 0.0)
+            retrieval_count=data.get("retrieval_count", 0),
+            success_count=data.get("success_count", 0)
         )
     
     def get_input_ids(self) -> torch.Tensor:
@@ -364,40 +370,47 @@ class VotingResult:
     Attributes:
         final_answer: The consensus answer
         confidence: Confidence score for the answer
-        votes: Individual votes from neighbors
-        weights: Weights used for each vote
-        provenance: Detailed provenance information
+        provenance: Detailed provenance information including audit trail
     """
     final_answer: Any
     confidence: float
-    votes: List[Dict[str, Any]] = field(default_factory=list)
-    weights: List[float] = field(default_factory=list)
     provenance: Dict[str, Any] = field(default_factory=dict)
     
     def __post_init__(self):
-        """Validate voting result data."""
+        """Validate voting result data and ensure required provenance fields."""
         if self.confidence < 0 or self.confidence > 1:
             raise ValueError(f"Confidence must be between 0 and 1, got {self.confidence}")
         
-        if len(self.votes) != len(self.weights):
-            raise ValueError(f"Number of votes ({len(self.votes)}) must match number of weights ({len(self.weights)})")
-        
-        # Normalize weights if needed
-        if self.weights and sum(self.weights) > 0:
-            total_weight = sum(self.weights)
-            self.weights = [w / total_weight for w in self.weights]
+        # Ensure required provenance fields exist
+        required_fields = ['model_self_answer', 'retrieved_neighbors_count', 
+                          'neighbor_answers', 'voting_strategy']
+        for field in required_fields:
+            if field not in self.provenance:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Missing required provenance field: {field}")
+                self.provenance[field] = None
     
     def get_vote_distribution(self) -> Dict[str, float]:
         """
-        Get distribution of votes.
+        Get distribution of votes from provenance.
         
         Returns:
-            Dictionary mapping answers to their weighted vote counts
+            Dictionary mapping answers to their counts
         """
         distribution = {}
-        for vote, weight in zip(self.votes, self.weights):
-            answer = str(vote.get("answer", "unknown"))
-            distribution[answer] = distribution.get(answer, 0.0) + weight
+        neighbor_answers = self.provenance.get('neighbor_answers', [])
+        
+        # Count model's own answer
+        model_answer = self.provenance.get('model_self_answer')
+        if model_answer is not None:
+            distribution[str(model_answer)] = distribution.get(str(model_answer), 0) + 1
+        
+        # Count neighbor answers
+        for neighbor in neighbor_answers:
+            answer = str(neighbor.get('answer', 'unknown'))
+            distribution[answer] = distribution.get(answer, 0) + 1
+        
         return distribution
     
     def get_consensus_strength(self) -> float:
@@ -411,16 +424,19 @@ class VotingResult:
         if not distribution:
             return 0.0
         
-        max_weight = max(distribution.values())
-        return max_weight  # Proportion of votes for winning answer
+        total_votes = sum(distribution.values())
+        if total_votes == 0:
+            return 0.0
+        
+        # Calculate strength as proportion of votes for winning answer
+        final_answer_votes = distribution.get(str(self.final_answer), 0)
+        return final_answer_votes / total_votes
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert voting result to dictionary."""
         return {
             "final_answer": self.final_answer,
             "confidence": self.confidence,
-            "votes": self.votes,
-            "weights": self.weights,
             "provenance": self.provenance,
             "consensus_strength": self.get_consensus_strength()
         }
