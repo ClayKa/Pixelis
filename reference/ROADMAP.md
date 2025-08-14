@@ -276,30 +276,30 @@ Important!!!: When finish one task or one round, or even one phase, replace the 
     - **Task 004: (Optional but Recommended) Perform Statistical Significance Testing** ✅
         - When comparing primary models against baselines, perform a statistical test (e.g., paired t-test) on the multi-seed results to confirm that observed improvements are statistically significant.
 
-- **Round 1: Comprehensive and Focused Ablation Studies** ⚪
+- **Round 1: Comprehensive and Focused Ablation Studies** ✅
     - See: `/tasks/Phase3Round1.md`
-    - **Task 001: Define a Clean and Powerful Comparison Set** ⚪
+    - **Task 001: Define a Clean and Powerful Comparison Set** ✅
         - Create a set of version-controlled configuration files for each model in the ablation study, including baselines, SFT-only, RFT-base, RFT-full, and the final online model.
-    - **Task 002: Create a New, Challenging Evaluation Benchmark** ⚪
+    - **Task 002: Create a New, Challenging Evaluation Benchmark** ✅
         - Create a new, held-out "Custom Capabilities Benchmark" from the synthesized data that contains tasks impossible to solve without the new visual operations, alongside standard benchmarks.
-    - **Task 003: Implement Tool-Specific Evaluation Metrics** ⚪
+    - **Task 003: Implement Tool-Specific Evaluation Metrics** ✅
         - Enhance the evaluation script to measure the performance of new tools on the custom benchmark, including Segmentation IoU/Boundary F1-score, OCR Edit Distance, and MOTA/MOTP for tracking.
-    - **Task 004: Analyze the Sample Efficiency of the SFT Process** ⚪
+    - **Task 004: Analyze the Sample Efficiency of the SFT Process** ✅
         - Train multiple SFT models on incremental subsets of the training data (10%, 25%, 50%, 100%) and plot the performance curve to provide powerful evidence of sample efficiency.
-    - **Task 005: Execute and Analyze Ablation and Comparative Experiments** ⚪
+    - **Task 005: Execute and Analyze Ablation and Comparative Experiments** ✅
         - Run all models on all benchmarks and create a key results table that demonstrates the superiority over baselines and provides knockout evidence of the new tools' contributions.
 
-- **Round 2: Testing for Robustness, Efficiency, and Continual Learning** ⚪
+- **Round 2: Testing for Robustness, Efficiency, and Continual Learning** ✅
     - See: `/tasks/Phase3Round2.md`
-    - **Task 001: Test Continual Learning and Domain Adaptation** ⚪
+    - **Task 001: Test Continual Learning and Domain Adaptation** ✅
         - Evaluate the `Pixelis-Online` model's adaptation speed on new, unseen domains and its resistance to catastrophic forgetting by sequentially exposing it to different tasks.
-    - **Task 002: Profile Efficiency and Latency** ⚪
+    - **Task 002: Profile Efficiency and Latency** ✅
         - Use `torch.profiler` to measure the latency overhead of key online components (e.g., k-NN search) and report the final P99 latency and memory usage to demonstrate real-world viability.
-    - **Task 003: Test Robustness to Noisy Data** ⚪
+    - **Task 003: Test Robustness to Noisy Data** ✅
         - Inject noisy data into the online stream and monitor the confidence score and update rate to verify that the confidence gating mechanism successfully prevents learning from corrupted signals.
-    - **Task 004: Conduct Hyperparameter Sensitivity Analysis** ⚪
+    - **Task 004: Conduct Hyperparameter Sensitivity Analysis** ✅
         - Systematically vary the most critical hyperparameters (reward weights, confidence threshold) and plot the impact on performance to identify a robust operating range for the system.
-    - **Task 005: Conduct Tool-Specific Stress Tests** ⚪
+    - **Task 005: Conduct Tool-Specific Stress Tests** ✅
         - Create augmented stress-test datasets with challenging visual conditions (occlusion, blur, distortion) to quantify the performance degradation and robustness of individual visual operations.
 
 - **Round 3: Human Evaluation of Reasoning Quality** ⚪
