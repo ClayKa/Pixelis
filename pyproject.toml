@@ -138,6 +138,7 @@ addopts = [
     "--ignore=saved_models/",
     "--ignore=checkpoints/",
     "--cov=core",
+    "--cov-config=.coveragerc",
     "--cov-report=term-missing",
     "--cov-report=html",
     "--cov-report=xml",

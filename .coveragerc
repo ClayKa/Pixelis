@@ -2,6 +2,7 @@
 source = core
 branch = True
 parallel = True
+concurrency = multiprocessing
 omit = 
     */tests/*
     */__init__.py
