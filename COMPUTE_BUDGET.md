@@ -350,3 +350,86 @@ For comprehensive experimentation with hyperparameter sweeps and additional abla
 ---
 
 **Note**: This is a living document and will be continuously updated as more accurate measurements become available through experimentation.
+---
+
+## Phase 3: Human Evaluation Budget
+
+### Human Annotation Requirements
+
+#### Configuration
+- **Total Samples**: 300 unique question-model pairs
+- **Annotations per Sample**: 3 independent annotators
+- **Total Annotations Required**: 900
+- **Time per Annotation**: 2-3 minutes average
+- **Annotator Hourly Rate**: $25-35/hour
+- **Expert Adjudicator Rate**: $50-75/hour
+
+#### Time Estimation
+```
+Total annotation time = 900 annotations × 2.5 minutes/annotation
+                      = 2,250 minutes 
+                      = 37.5 hours
+
+With breaks and training:
+- Training time: 2 hours × 5 annotators = 10 hours
+- Annotation time: 37.5 hours
+- Break time (15%): 5.6 hours
+- Total annotator time: ~53 hours
+```
+
+#### Cost Breakdown
+```
+Primary Annotation:
+- 5 annotators × ~11 hours each × $30/hour = $1,650
+
+Expert Adjudication (10% of samples):
+- 30 samples × 5 minutes/sample = 2.5 hours
+- 2.5 hours × $60/hour = $150
+
+Platform & Tools:
+- Gradio hosting: $0 (local deployment)
+- Data preparation: 2 hours × $50/hour = $100
+
+Total Human Evaluation Budget: ~$1,900
+```
+
+#### Quality Control
+- **Calibration Session**: 2 hours per annotator
+- **Practice Annotations**: 20 samples before main task
+- **Attention Checks**: 5% of samples are duplicates
+- **Inter-Annotator Agreement Target**: κ > 0.6
+
+#### Timeline
+- **Week 1**: Interface development and testing
+- **Week 2**: Annotator recruitment and training
+- **Week 3-4**: Main annotation period
+- **Week 5**: Analysis and reporting
+
+### Updated Total Project Budget
+
+#### Computational Resources
+- **Phase 1 (Offline)**: ~500-600 GPU hours
+- **Phase 2 (Online)**: ~2,000-2,400 GPU hours
+- **Phase 3 (Evaluation)**: ~300-500 GPU hours
+- **Total GPU Hours**: ~2,800-3,500 hours
+
+#### Human Resources
+- **Human Annotation**: ~$1,900
+- **Project Management**: Not included
+- **Development Time**: Not included
+
+#### Combined Estimated Cost
+```
+GPU Cost (A100 @ $2/hour): $5,600-7,000
+Human Annotation: $1,900
+Infrastructure/Storage: $500
+Total Project Cost: ~$8,000-9,400
+```
+
+---
+
+**Human Evaluation Update**: v1.0.1 (2025-08-14)
+- Added comprehensive human evaluation budget
+- Included annotator training and quality control costs
+- Updated total project budget with human resources
+

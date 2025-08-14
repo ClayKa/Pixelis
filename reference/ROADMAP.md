@@ -302,15 +302,15 @@ Important!!!: When finish one task or one round, or even one phase, replace the 
     - **Task 005: Conduct Tool-Specific Stress Tests** ✅
         - Create augmented stress-test datasets with challenging visual conditions (occlusion, blur, distortion) to quantify the performance degradation and robustness of individual visual operations.
 
-- **Round 3: Human Evaluation of Reasoning Quality** ⚪
+- **Round 3: Human Evaluation of Reasoning Quality** ✅
     - See: `/tasks/Phase3Round3.md`
-    - **Task 001: Define the Evaluation Scope and Hypotheses** ⚪
+    - **Task 001: Define the Evaluation Scope and Hypotheses** ✅
         - State clear, testable hypotheses for the human evaluation, focusing on whether the new reward components lead to reasoning that is perceived as more coherent and intelligent.
-    - **Task 002: Design the Human Evaluation Interface and Protocol** ⚪
+    - **Task 002: Design the Human Evaluation Interface and Protocol** ✅
         - Build a simple and unbiased UI using `Gradio` or `Streamlit` that presents annotators with blind, side-by-side comparisons of reasoning trajectories from different models.
-    - **Task 003: Plan the Data Sampling and Annotation Process** ⚪
+    - **Task 003: Plan the Data Sampling and Annotation Process** ✅
         - Randomly sample a diverse set of 100-300 questions for evaluation, with each question being annotated by three different human judges to ensure reliability.
-    - **Task 004: Analyze Results and Report Inter-Annotator Agreement** ⚪
+    - **Task 004: Analyze Results and Report Inter-Annotator Agreement** ✅
         - Collect all ratings, calculate a statistical measure of Inter-Annotator Agreement (e.g., Fleiss' Kappa), and use appropriate statistical tests to determine if observed differences are significant.
 
 - **Round 4: Inference Acceleration & Optimization** ⚪
