@@ -12,7 +12,6 @@ from unittest.mock import Mock, patch, MagicMock
 import warnings
 
 import numpy as np
-import pytest
 import torch
 import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -254,7 +253,6 @@ class TestPerformanceAssertions(unittest.TestCase):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     
-    @pytest.mark.gpu
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_memory_usage(self):
         """Test that memory usage is below threshold"""
@@ -284,7 +282,6 @@ class TestPerformanceAssertions(unittest.TestCase):
             f"Memory usage ({memory_mb:.2f} MB) exceeds threshold ({self.memory_threshold_mb} MB)"
         )
     
-    @pytest.mark.gpu
     def test_inference_latency(self):
         """Test that inference latency is below threshold"""
         
@@ -341,7 +338,6 @@ class TestPerformanceAssertions(unittest.TestCase):
             f"Inference latency ({avg_latency_ms:.2f} ms) exceeds threshold ({self.latency_threshold_ms} ms)"
         )
     
-    @pytest.mark.gpu
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA not available")
     def test_memory_with_gradient_checkpointing(self):
         """Test memory usage with gradient checkpointing enabled"""

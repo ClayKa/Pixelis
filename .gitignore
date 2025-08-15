@@ -83,6 +83,7 @@ evaluations/
 saved_models/*
 !saved_models/.gitkeep
 analysis_outputs/
+pretrained_models/
 
 # Temporary files
 tmp/

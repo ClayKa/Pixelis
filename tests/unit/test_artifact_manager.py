@@ -41,8 +41,8 @@ class TestArtifactManager:
         
         manager.init_run(run_name, project="test_project", tags=["test"])
         
-        assert manager.current_run_id is not None
-        assert run_name in manager.current_run_id
+        assert manager.run_id is not None
+        assert run_name in manager.run_id
     
     def test_log_artifact(self):
         """Test artifact logging."""

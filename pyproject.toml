@@ -138,7 +138,6 @@ addopts = [
     "--ignore=saved_models/",
     "--ignore=checkpoints/",
     "--cov=core",
-    "--cov-config=.coveragerc",
     "--cov-report=term-missing",
     "--cov-report=html",
     "--cov-report=xml",
@@ -149,6 +148,7 @@ markers = [
     "integration: marks tests as integration tests",
     "unit: marks tests as unit tests",
     "gpu: marks tests that require GPU",
+    "asyncio: mark test as requiring asyncio",
 ]
 
 [tool.coverage.run]

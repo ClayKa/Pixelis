@@ -1,0 +1,11 @@
+=== TEST RESULTS SUMMARY ===
+
+1. BASIC TESTS
+cachedir: .pytest_cache
+tests/test_basic.py::test_visual_operations PASSED                       [ 20%]
+tests/test_basic.py::test_data_structures PASSED                         [ 40%]
+tests/test_basic.py::test_configuration PASSED                           [ 60%]
+tests/test_basic.py::test_voting_module PASSED                           [ 80%]
+tests/test_basic.py::test_dynamics_model PASSED                          [100%]
+
+2. UNIT TESTS
