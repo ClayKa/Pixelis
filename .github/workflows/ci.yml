@@ -40,7 +40,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           miniconda-version: "latest"
           activate-environment: pixelis
-          use-only-tar-bz2: true  # Faster downloads
+          use-only-tar-bz2: false  # Faster downloads
 
       - name: Install System Dependencies
         run: |
@@ -170,7 +170,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           miniconda-version: "latest"
           activate-environment: pixelis-gpu
-          use-only-tar-bz2: true
+          use-only-tar-bz2: false
 
       - name: Install System Dependencies
         run: |
