@@ -1,21 +1,14 @@
-# Core logic and utilities (platform-agnostic)
 numpy
 pandas
 pyyaml
 hydra-core
 tqdm
 einops
-wandb
-matplotlib
-
-# Hugging Face libraries (generally cross-platform)
 transformers
 trl
 peft
 datasets
 accelerate
-
-# Testing and QA tools
 pytest
 pytest-cov
 pytest-asyncio
@@ -24,7 +17,8 @@ pre-commit
 ruff
 black
 mypy
-
-# UI Libraries
 gradio
 streamlit
+deepspeed
+matplotlib
+wandb
