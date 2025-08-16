@@ -45,7 +45,6 @@ jobs:
       - name: Install System Dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-glx libglib2.0-0 libsm6 libxext6 libxrender-dev libgomp1
 
       - name: Create/Update Conda Environment
         shell: bash -l {0}
