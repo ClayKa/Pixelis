@@ -1,0 +1,20 @@
+name: pixelis
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  # Conda-managed core dependencies for Linux/NVIDIA
+  - python=3.10
+  - pytorch
+  - torchvision
+  - torchaudio
+  - pytorch-cuda=12.1
+  - faiss-gpu
+  - scipy
+  - pip
+
+  # Pip-managed dependencies, pointing to the server config
+  - pip:
+    - -r requirements/prod-linux.txt

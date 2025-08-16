@@ -1,0 +1,4 @@
+-r base.txt
+
+# Linux/NVIDIA server specific dependencies
+deepspeed
