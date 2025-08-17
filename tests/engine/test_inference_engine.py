@@ -9,7 +9,7 @@ import unittest
 import torch
 import torch.multiprocessing as mp
 import numpy as np
-from datetime import datetime
+from datetime import datetime, timedelta
 from unittest.mock import Mock, MagicMock, patch, AsyncMock
 import asyncio
 import threading
@@ -66,7 +66,7 @@ class TestSharedMemoryManager(unittest.TestCase):
         
         # Make segment stale by modifying creation time
         self.shm_manager.pending_shm[shm_info1.name].created_at = (
-            datetime.now() - datetime.timedelta(seconds=10)
+            datetime.now() - timedelta(seconds=10)
         )
         
         # Clean up stale segments
