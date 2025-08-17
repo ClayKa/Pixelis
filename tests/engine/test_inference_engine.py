@@ -356,12 +356,17 @@ class TestInferenceEngine(unittest.TestCase):
         # Add a cleanup confirmation
         self.engine.cleanup_confirmation_queue.put("test_shm_segment")
         
+        # Give queue time to settle (macOS spawn mode issue)
+        import time
+        time.sleep(0.01)
+        
         # Process cleanup confirmations
         self.engine._process_cleanup_confirmations()
         
-        # Should have marked the segment as cleaned
-        # (Would need to verify with actual SharedMemoryManager)
-        self.assertTrue(self.engine.cleanup_confirmation_queue.empty())
+        # Try to get from the queue - should be empty and raise Empty
+        from queue import Empty
+        with self.assertRaises(Empty):
+            self.engine.cleanup_confirmation_queue.get_nowait()
     
     def test_stats_tracking(self):
         """Test statistics tracking."""

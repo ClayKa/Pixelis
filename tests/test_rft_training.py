@@ -18,6 +18,7 @@ from pathlib import Path
 import sys
 from unittest.mock import Mock, patch, MagicMock
 from collections import defaultdict
+from trl import PPOTrainer
 
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -544,13 +545,10 @@ class TestGRPOTrainer:
             -2.0, -1.0, 1.0, 2.0
         ])
 
-        # 2. Mock the parent method to return our PREDICTABLE tensor.
-        def mock_compute_advantages(self, values, rewards, mask):
-            return mock_advantages
+        # 2. Mock the PARENT class method to return our PREDICTABLE tensor.
+        # We need to mock PPOTrainer's compute_advantages, not GRPOTrainer's
+        from unittest.mock import patch, MagicMock
         
-        GRPOTrainer.compute_advantages = mock_compute_advantages
-        # --- END OF NEW SETUP ---
-
         # The rest of the test can now make precise assertions.
         trainer = GRPOTrainer.__new__(GRPOTrainer)
         trainer.group_size = 4
@@ -559,28 +557,40 @@ class TestGRPOTrainer:
         rewards = torch.randn(12, 1)
         mask = torch.ones(12, 1)
         
-        # This will call the actual group normalization logic on our mock_advantages
-        normalized_advantages = trainer.compute_advantages(values, rewards, mask)
-
-        # Check shape
-        assert normalized_advantages.shape == (12,)
+        # Create a mock for the parent's compute_advantages method
+        # We'll patch the super() call directly
+        original_super = super
         
-        # Reshape for analysis
-        grouped = normalized_advantages.view(3, 4)
-
-        # --- NEW, ROBUST ASSERTIONS ---
-        # Group 1 should now have mean ~0 and std ~1
-        assert grouped[0].mean().item() == pytest.approx(0.0, abs=1e-6)
-        assert grouped[0].std().item() == pytest.approx(1.0, abs=1e-6)
-
-        # Group 2 (all same values) is an edge case. Std is 0, so normalization
-        # should result in all zeros to avoid division by zero.
-        assert grouped[1].mean().item() == pytest.approx(0.0, abs=1e-6)
-        assert grouped[1].std().item() == pytest.approx(0.0, abs=1e-6)
+        def mock_super(cls=None, inst=None):
+            mock_parent = MagicMock()
+            mock_parent.compute_advantages = MagicMock(return_value=mock_advantages)
+            return mock_parent
         
-        # Group 3 already has mean 0, so it should be scaled by its std dev.
-        assert grouped[2].mean().item() == pytest.approx(0.0, abs=1e-6)
-        assert grouped[2].std().item() == pytest.approx(1.0, abs=1e-6)
+        # Temporarily replace super() with our mock
+        import builtins
+        with patch.object(builtins, 'super', mock_super):
+            # This will call the actual group normalization logic on our mock_advantages
+            normalized_advantages = trainer.compute_advantages(values, rewards, mask)
+
+            # Check shape
+            assert normalized_advantages.shape == (12,)
+            
+            # Reshape for analysis
+            grouped = normalized_advantages.view(3, 4)
+
+            # --- NEW, ROBUST ASSERTIONS ---
+            # Group 1 should now have mean ~0 and std ~1
+            assert grouped[0].mean().item() == pytest.approx(0.0, abs=1e-6)
+            assert grouped[0].std().item() == pytest.approx(1.0, abs=1e-6)
+
+            # Group 2 (all same values) is an edge case. Std is 0, so normalization
+            # should result in all zeros to avoid division by zero.
+            assert grouped[1].mean().item() == pytest.approx(0.0, abs=1e-6)
+            assert grouped[1].std().item() == pytest.approx(0.0, abs=1e-6)
+            
+            # Group 3 already has mean 0, so it should be scaled by its std dev.
+            assert grouped[2].mean().item() == pytest.approx(0.0, abs=1e-6)
+            assert grouped[2].std().item() == pytest.approx(1.0, abs=1e-6)
 
 
 class TestUtilityFunctions:

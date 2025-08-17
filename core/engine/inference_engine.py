@@ -980,18 +980,23 @@ class InferenceEngine:
         """
         Process cleanup confirmations from the update worker.
         """
-        import queue
+        from queue import Empty
+        processed_count = 0
         while True:
             try:
                 # Non-blocking get from cleanup queue
                 shm_name = self.cleanup_confirmation_queue.get_nowait()
                 self.shm_manager.mark_cleaned(shm_name)
                 logger.debug(f"Received cleanup confirmation for {shm_name}")
-            except queue.Empty:
+                processed_count += 1
+            except Empty:
                 # Queue is empty - expected condition
+                logger.debug(f"Processed {processed_count} cleanup confirmations, queue now empty")
                 break
             except Exception as e:
-                logger.error(f"Unexpected error processing cleanup confirmation: {e}")
+                logger.error(f"Unexpected error processing cleanup confirmation: {e.__class__.__name__}: {e}")
+                import traceback
+                logger.error(f"Traceback: {traceback.format_exc()}")
                 break
     
     def _log_status(self):
