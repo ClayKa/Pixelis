@@ -311,8 +311,12 @@ class EnhancedExperienceBuffer:
                 else:
                     cpu_index = faiss.IndexFlatL2(embedding_dim)
                 
-                self.index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
-                logger.info("GPU FAISS index initialized successfully")
+                # Create GPU index
+                gpu_index = faiss.index_cpu_to_gpu(res, 0, cpu_index)
+                
+                # CRITICAL FIX: Wrap the GPU index in IndexIDMap to support add_with_ids
+                self.index = faiss.IndexIDMap(gpu_index)
+                logger.info("GPU FAISS index with IDMap wrapper initialized successfully")
                 
             else:
                 # Use CPU index
