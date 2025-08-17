@@ -377,13 +377,35 @@ class TestUpdateWorker:
     @patch('core.engine.update_worker.logger')
     def test_process_update_success(self, mock_logger, update_worker, sample_update_task):
         """Test successful update processing."""
-        # Mock low KL divergence to ensure update succeeds
-        with patch.object(update_worker, '_calculate_kl_penalty') as mock_kl:
-            mock_kl.return_value = (torch.tensor(0.001), torch.tensor(0.001))  # Very low KL
-            
-            update_worker._process_update(sample_update_task)
         
-        # Check statistics
+        # --- NEW, MORE ROBUST MOCKING STRATEGY ---
+        
+        # 1. Define the desired output of the model's forward pass.
+        #    This output should cause a VERY SMALL KL divergence.
+        new_logits = sample_update_task.original_logits + 1e-6
+        
+        # 2. Create a mock model object that will replace the real/mocked one.
+        mock_model = MagicMock()
+        
+        # 3. Configure the MOCK MODEL's return value to have the required attributes.
+        #    The model returns an object with .loss and .logits attributes.
+        mock_output = MagicMock()
+        mock_output.loss = torch.tensor(0.1, requires_grad=True)  # Small loss that requires grad
+        mock_output.logits = new_logits
+        mock_model.return_value = mock_output
+        
+        # 4. Use `patch.object` to temporarily replace `update_worker.model`
+        #    with our specially crafted `mock_model` *only for the duration of this test*.
+        #    This is the most reliable way to ensure the correct object is patched.
+        with patch.object(update_worker, 'model', mock_model), \
+             patch.object(update_worker, '_log_update') as mock_log_update:
+            # 5. All code inside this `with` block will now use our mock_model
+            #    when it calls `self.model(...)`.
+            update_worker._process_update(sample_update_task)
+
+        # --- END OF NEW STRATEGY ---
+        
+        # 6. The assertion remains the same, but should now pass.
         assert update_worker.stats['total_updates'] == 1
         assert update_worker.stats['successful_updates'] == 1
         assert update_worker.stats['failed_updates'] == 0
@@ -572,10 +594,29 @@ class TestIntegration:
                 tasks.append(task)
                 update_queue.put(task)
             
-            # Mock low KL divergence to ensure updates succeed
-            with patch.object(worker, '_calculate_kl_penalty') as mock_kl:
-                mock_kl.return_value = (torch.tensor(0.001), torch.tensor(0.001))  # Very low KL
-                
+            # --- NEW, MORE ROBUST MOCKING STRATEGY ---
+            
+            # Create a mock model that returns logits very close to original to minimize KL divergence
+            mock_model = MagicMock()
+            
+            # Track which task we're processing
+            task_index = 0
+            
+            # Configure the mock to return outputs with the required .loss and .logits attributes
+            def mock_model_call(*args, **kwargs):
+                nonlocal task_index
+                mock_output = MagicMock()
+                mock_output.loss = torch.tensor(0.1, requires_grad=True)  # Small loss that requires grad
+                # Return logits close to the current task's original to minimize KL divergence
+                mock_output.logits = tasks[task_index].original_logits + 1e-6
+                task_index += 1
+                return mock_output
+            
+            mock_model.side_effect = mock_model_call
+            
+            # Use patch.object to replace the worker's model
+            with patch.object(worker, 'model', mock_model), \
+                 patch.object(worker, '_log_update'):
                 # Process tasks
                 for _ in range(3):
                     task = update_queue.get(timeout=1.0)
