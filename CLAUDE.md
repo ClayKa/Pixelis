@@ -195,3 +195,7 @@ The project follows a structured development approach as outlined in `ROADMAP.md
 - Dynamic batching in vLLM
 - INT8 quantization support
 - Gradient accumulation for large batch sizes
+
+## Requirements First-priority
+
+- Before training, need to solve all the errors/bugs showed by pytest and run_all_tests.py
