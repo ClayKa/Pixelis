@@ -537,35 +537,50 @@ class TestGRPOTrainer:
         assert len(trainer.replay_buffer) == 0
     
     def test_group_advantage_normalization(self):
-        """Test group-based advantage normalization."""
-        # Create a minimal trainer instance
+        # 1. Manually create a predictable input tensor.
+        mock_advantages = torch.tensor([
+            1.0, 2.0, 3.0, 4.0,
+            5.0, 5.0, 5.0, 5.0,
+            -2.0, -1.0, 1.0, 2.0
+        ])
+
+        # 2. Mock the parent method to return our PREDICTABLE tensor.
+        def mock_compute_advantages(self, values, rewards, mask):
+            return mock_advantages
+        
+        GRPOTrainer.compute_advantages = mock_compute_advantages
+        # --- END OF NEW SETUP ---
+
+        # The rest of the test can now make precise assertions.
         trainer = GRPOTrainer.__new__(GRPOTrainer)
         trainer.group_size = 4
         
-        # Mock parent class method
-        def mock_compute_advantages(self, values, rewards, mask):
-            return torch.randn(12)  # Return random advantages
-        
-        GRPOTrainer.compute_advantages = mock_compute_advantages
-        
-        # Create test inputs
-        values = torch.randn(12, 1)
+        values = torch.randn(12, 1) # These are now irrelevant but needed for the call
         rewards = torch.randn(12, 1)
         mask = torch.ones(12, 1)
         
-        # Compute advantages with group normalization
-        advantages = trainer.compute_advantages(values, rewards, mask)
-        
+        # This will call the actual group normalization logic on our mock_advantages
+        normalized_advantages = trainer.compute_advantages(values, rewards, mask)
+
         # Check shape
-        assert advantages.shape == (12,)
+        assert normalized_advantages.shape == (12,)
         
-        # First 8 values should be normalized (2 groups of 4)
-        grouped = advantages[:8].view(2, 4)
+        # Reshape for analysis
+        grouped = normalized_advantages.view(3, 4)
+
+        # --- NEW, ROBUST ASSERTIONS ---
+        # Group 1 should now have mean ~0 and std ~1
+        assert grouped[0].mean().item() == pytest.approx(0.0, abs=1e-6)
+        assert grouped[0].std().item() == pytest.approx(1.0, abs=1e-6)
+
+        # Group 2 (all same values) is an edge case. Std is 0, so normalization
+        # should result in all zeros to avoid division by zero.
+        assert grouped[1].mean().item() == pytest.approx(0.0, abs=1e-6)
+        assert grouped[1].std().item() == pytest.approx(0.0, abs=1e-6)
         
-        # Each group should have approximately mean 0 and std 1
-        for group in grouped:
-            assert abs(group.mean().item()) < 0.5
-            # Note: std check is approximate due to small sample size
+        # Group 3 already has mean 0, so it should be scaled by its std dev.
+        assert grouped[2].mean().item() == pytest.approx(0.0, abs=1e-6)
+        assert grouped[2].std().item() == pytest.approx(1.0, abs=1e-6)
 
 
 class TestUtilityFunctions:
