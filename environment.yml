@@ -14,5 +14,8 @@ dependencies:
   - faiss-gpu # CRITICAL: Install the GPU version
   - scipy
   - pip
+  - seaborn
+  - matplotlib
+  - scikit-learn
 
   # Pip-managed dependencies will be installed in the next step

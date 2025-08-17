@@ -11,6 +11,8 @@ import unittest
 from pathlib import Path
 from typing import List, Dict
 from unittest.mock import Mock, patch, MagicMock
+from scripts.run_multi_seed_experiment import ExperimentRunner, SeedResult # Adjust import if needed
+from core.config_schema import ExperimentConfig # Adjust import if needed
 
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -287,9 +289,10 @@ class TestExperimentalProtocol(unittest.TestCase):
             self.assertIn("\\begin{table}", latex_table)
             self.assertIn("\\toprule", latex_table)
             self.assertIn("\\bottomrule", latex_table)
-    
+
     def test_parallel_seed_execution(self):
-        """Test parallel seed execution configuration"""
+        """Test parallel seed execution configuration and flow"""
+        # --- (Configuration setup remains the same) ---
         config = Mock(spec=ExperimentConfig)
         config.experiment_name = "test"
         config.mode = "sft"
@@ -301,21 +304,46 @@ class TestExperimentalProtocol(unittest.TestCase):
         config.dry_run = True
         config.wandb_project = "test"
         config.wandb_tags = []
-        
+
         runner = ExperimentRunner(config)
-        
-        # Mock the single seed runner
+
+        # --- (Mocking the single seed runner remains the same) ---
         with patch.object(runner, '_run_single_seed') as mock_run:
             mock_run.return_value = SeedResult(seed=42, success=True)
-            
-            # Run should use parallel execution
-            with patch('scripts.run_multi_seed_experiment.ProcessPoolExecutor') as mock_executor:
-                mock_executor.return_value.__enter__.return_value.submit = Mock()
-                runner._run_parallel_seeds()
-                
-                # Verify executor was created with correct max_workers
-                mock_executor.assert_called_once_with(max_workers=2)
 
+            # --- [FINAL FIX] Mock ProcessPoolExecutor AND as_completed ---
+            with patch('scripts.run_multi_seed_experiment.ProcessPoolExecutor') as MockProcessPoolExecutor, \
+                patch('scripts.run_multi_seed_experiment.as_completed') as mock_as_completed:
+            
+                # 1. Configure the ProcessPoolExecutor mock (as before)
+                mock_executor_instance = MagicMock()
+                MockProcessPoolExecutor.return_value.__enter__.return_value = mock_executor_instance
+
+                # 2. Create a list of mock futures that 'submit' will return
+                mock_futures = [MagicMock() for _ in config.seeds]
+                mock_executor_instance.submit.side_effect = mock_futures
+
+                # 3. Configure the as_completed mock
+                #    It should take a list of futures and return them (simulating completion)
+                mock_as_completed.return_value = mock_futures
+
+                # 4. Call the function under test
+                results = runner._run_parallel_seeds()
+
+                # --- (Assertions) ---
+                # Assert that the executor was created correctly
+                MockProcessPoolExecutor.assert_called_once_with(max_workers=2)
+            
+                # Assert that submit was called for each seed
+                assert mock_executor_instance.submit.call_count == len(config.seeds)
+            
+                # Assert that as_completed was called with the correct futures
+                # Note: The argument to as_completed is a dictionary's keys view, so we check the content
+                called_futures = mock_as_completed.call_args[0][0]
+                assert set(called_futures) == set(mock_futures)
+
+                # Assert that the results were collected
+                assert len(results) == len(config.seeds)
 
 class TestStatisticalMethods(unittest.TestCase):
     """Test statistical methods implementation"""

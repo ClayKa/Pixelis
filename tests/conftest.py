@@ -9,6 +9,50 @@ from pathlib import Path
 from typing import Generator, Any
 
 import pytest
+import multiprocessing
+from unittest.mock import MagicMock, patch
+
+@pytest.fixture(autouse=True)
+def mock_wandb(mocker):
+    """
+    Auto-used fixture to completely mock the wandb library for all tests
+    that might import it. Prevents any real network calls.
+
+    This works by patching 'wandb' in the specific modules where it is imported and used.
+    """
+    # A list of all modules where 'import wandb' might occur.
+    # We will attempt to patch 'wandb' in each of these locations.
+    modules_to_patch = [
+        'core.reproducibility.artifact_manager.wandb',
+        'scripts.train.wandb',       # Assuming a unified train.py
+        'scripts.train_rft.wandb',   # Assuming a specific rft script
+        'scripts.train_sft.wandb',   # Assuming a specific sft script
+        # Add any other module paths here if they also import wandb
+    ]
+
+    for module_path in modules_to_patch:
+        try:
+            # For each potential location, patch 'wandb' with a MagicMock
+            mocker.patch(module_path, MagicMock())
+        except (ModuleNotFoundError, AttributeError):
+            # This is expected and safe. It just means the test currently being
+            # run doesn't involve a module that imports wandb from that path.
+            # For example, when testing test_voting.py, it won't find 'scripts.train.wandb'.
+            pass
+
+@pytest.fixture(scope="session", autouse=True)
+def set_multiprocessing_start_method():
+    """
+    Set the multiprocessing start method to 'spawn' for all tests.
+
+    This is crucial to prevent deadlocks on Linux/macOS when using libraries
+    that have their own internal thread pools (like numpy with BLAS/LAPACK)
+    in a forked process, especially within a pytest environment.
+    'spawn' creates a clean new process, avoiding state inheritance issues.
+    """
+    # We only need to do this if the default is 'fork'
+    if multiprocessing.get_start_method(allow_none=True) != 'spawn':
+        multiprocessing.set_start_method('spawn', force=True)
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))

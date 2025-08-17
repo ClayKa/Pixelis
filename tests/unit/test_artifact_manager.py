@@ -62,26 +62,41 @@ class TestArtifactManager:
         assert artifact["type"] == ArtifactType.CONFIG.value
         assert artifact["version"] == "v1"
     
-    def test_log_large_artifact(self, temp_dir):
-        """Test large artifact logging with file."""
+    def test_log_large_artifact(self, mocker, tmp_path): # <-- Add tmp_path fixture
+        """
+        Test that logging a large file artifact works correctly
+        WITHOUT performing real, slow I/O operations.
+        """
         manager = ArtifactManager()
-        manager.init_run("test_run")
-        
-        # Create a test file
-        test_file = temp_dir / "test_model.pt"
-        test_file.write_text("model_data")
-        
-        artifact = manager.log_large_artifact(
-            name="test_model",
-            file_path=test_file,
-            type=ArtifactType.MODEL,
-            metadata={"size": "large"}
+    
+        # Mock the slow I/O methods
+        mock_hash_compute = mocker.patch.object(manager, '_compute_file_hash', return_value='mock_hash_123')
+        mock_storage_upload = mocker.patch.object(manager.storage_backend, 'upload')
+    
+        # 1. [THE FIX] Create a REAL, EMPTY temporary file.
+        #    tmp_path is a pytest fixture that provides a temporary Path object.
+        large_file = tmp_path / "large_dataset.bin"
+        large_file.touch() # Create the empty file
+
+        # We can still mock its stat() method if we need to simulate a large size
+        # without actually writing data.
+        mocker.patch.object(large_file, 'stat', return_value=MagicMock(st_size=1 * 1024**3))
+    
+        # 2. Call the function under test with the REAL Path object
+        artifact_meta = manager.log_artifact(
+            name="large_dataset",
+            type="dataset",
+            file_path=large_file # <-- Pass the real, temporary Path object
         )
-        
-        assert artifact is not None
-        assert artifact["name"] == "test_model"
-        assert artifact["type"] == ArtifactType.MODEL.value
-        assert "file_hash" in artifact
+
+        # 3. Assert that the slow methods were called with the correct path
+        mock_hash_compute.assert_called_once_with(large_file)
+        mock_storage_upload.assert_called_once_with(large_file, 'mock_hash_123')
+
+        # 4. Assert metadata is correct
+        assert artifact_meta.name == "large_dataset"
+        assert artifact_meta.hash == "mock_hash_123"
+        assert artifact_meta.size_bytes == 1 * 1024**3
     
     def test_use_artifact(self):
         """Test artifact retrieval."""
