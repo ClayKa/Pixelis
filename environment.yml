@@ -1,21 +1,13 @@
 name: pixelis
 channels:
-  - pytorch
-  - nvidia # CRITICAL: Add nvidia channel for CUDA-enabled packages
-  - conda-forge
   - defaults
 dependencies:
-  # Conda-managed core dependencies for Linux/NVIDIA
   - python=3.10
-  - pytorch
-  - torchvision
+  - faiss-gpu
   - torchaudio
-  - pytorch-cuda=12.1 # Or another version compatible with your driver
-  - faiss-gpu # CRITICAL: Install the GPU version
+  - torchvision
+  - pytorch
   - scipy
+  - pytorch-cuda=12.1
   - pip
-  - seaborn
-  - matplotlib
-  - scikit-learn
-
-  # Pip-managed dependencies will be installed in the next step
+prefix: /home/clayka/miniconda3/envs/pixelis
