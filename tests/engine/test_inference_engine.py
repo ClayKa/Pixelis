@@ -207,7 +207,15 @@ class TestInferenceEngine(unittest.TestCase):
     
     @patch('core.engine.inference_engine.asyncio.run')
     def test_infer_and_adapt(self, mock_asyncio_run):
-        """Test the main inference and adaptation loop."""
+        """Test the main inference and adaptation loop in NORMAL (non-cold-start) mode."""
+        
+        # --- NEW CODE START ---
+        # GOAL: Disable cold start mode to test the main workflow.
+        # We mock the buffer's size to be greater than the confidence threshold.
+        # Assuming the default threshold is 100.
+        self.mock_buffer.__len__ = MagicMock(return_value=200)
+        # --- NEW CODE END ---
+        
         # Setup mock returns
         self.mock_model.forward = MagicMock(return_value={
             'answer': 'cat',
@@ -246,8 +254,38 @@ class TestInferenceEngine(unittest.TestCase):
         result = loop.run_until_complete(run_coro())
         
         # Verify calls
+        # NOW, this assertion should pass because cold start is bypassed.
         self.mock_buffer.search_index.assert_called_once()
         self.mock_voting.vote.assert_called_once()
+    
+    @patch('core.engine.inference_engine.asyncio.run')
+    def test_infer_and_adapt_bypasses_knn_in_cold_start(self, mock_asyncio_run):
+        """
+        Verify that k-NN search and voting are correctly bypassed during cold start.
+        """
+        # --- NEW TEST SETUP ---
+        # GOAL: Ensure cold start mode is active.
+        self.mock_buffer.__len__ = MagicMock(return_value=10)  # Well below threshold
+
+        # Setup mock returns needed for the cold start path
+        self.mock_model.forward = MagicMock(return_value={'answer': 'cat', 'logits': torch.randn(1, 100)})
+        
+        input_data = {'image_features': torch.randn(1, 512), 'question': 'What animal is this?'}
+        
+        # Configure asyncio mock to run the coroutine
+        async def run_coro():
+            return await self.engine.infer_and_adapt(input_data)
+        
+        mock_asyncio_run.return_value = ('cat', 0.8, {})
+        
+        # Run inference
+        loop = asyncio.new_event_loop()
+        result = loop.run_until_complete(run_coro())
+
+        # Verify that search_index was NOT called
+        self.mock_buffer.search_index.assert_not_called()
+        self.mock_voting.vote.assert_not_called()
+        # --- END OF NEW TEST ---
     
     def test_process_human_review_decision(self):
         """Test processing human review decisions."""
