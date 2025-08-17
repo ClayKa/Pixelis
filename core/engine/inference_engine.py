@@ -1086,8 +1086,17 @@ class InferenceEngine:
         
         # Stop watchdog
         self.watchdog_running = False
-        if self.watchdog_thread:
+        if self.watchdog_thread and self.watchdog_thread.is_alive():
             self.watchdog_thread.join(timeout=5.0)
+            if self.watchdog_thread.is_alive():
+                logger.error("Watchdog thread failed to shut down gracefully")
+        
+        # Stop monitoring
+        self.monitoring_running = False
+        if self.monitoring_thread and self.monitoring_thread.is_alive():
+            self.monitoring_thread.join(timeout=5.0)
+            if self.monitoring_thread.is_alive():
+                logger.error("Monitoring thread failed to shut down gracefully")
         
         # Send shutdown signal to update worker
         if self.update_queue:

@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 import torch.multiprocessing as mp
 from torch.multiprocessing import Queue
+from queue import Empty
 import numpy as np
 import tempfile
 import time
@@ -799,7 +800,7 @@ class TestUpdateWorkerEdgeCases:
     def test_process_update_queue_timeout(self, update_worker):
         """Test queue timeout handling in run method."""
         # Mock empty queue that times out
-        with patch.object(update_worker.update_queue, 'get', side_effect=mp.queues.Empty):
+        with patch.object(update_worker.update_queue, 'get', side_effect=Empty):
             # Mock the run method to exit after one iteration
             update_worker.stats['test_timeout'] = True
             
@@ -814,7 +815,7 @@ class TestUpdateWorkerEdgeCases:
                         task = update_worker.update_queue.get(timeout=1.0)
                         if task is None:
                             break
-                    except mp.queues.Empty:
+                    except Empty:
                         iteration_count += 1
                         continue
                     except Exception:
