@@ -257,10 +257,10 @@ class TestAsyncCommunication:
         assert worker.model == mock_model
         assert worker.kl_config.initial_beta == 0.01
         assert worker.kl_config.target_kl == 0.05
-        assert worker.grad_clip_norm == 1.0
+        assert worker.gradient_clip_norm == 1.0
         assert worker.ema_decay == 0.999
-        assert worker.total_updates == 0
-        assert worker.failed_updates == 0
+        assert worker.stats['total_updates'] == 0
+        assert worker.stats['failed_updates'] == 0
     
     def test_adaptive_learning_rate(
         self, mock_model, mock_experience_buffer,

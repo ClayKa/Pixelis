@@ -35,10 +35,13 @@ class DummyModel(nn.Module):
     
     def forward(self, input_ids=None, images=None, labels=None):
         """Simple forward pass."""
-        if input_ids is not None:
-            x = torch.randn(1, 256)  # Placeholder
+        if images is not None:
+            # Use the actual image features if provided
+            x = images
+        elif input_ids is not None:
+            x = torch.randn(1, 512)  # Placeholder with correct size
         else:
-            x = torch.randn(1, 256)
+            x = torch.randn(1, 512)  # Default with correct size
         
         x = torch.relu(self.fc1(x))
         logits = self.fc2(x)

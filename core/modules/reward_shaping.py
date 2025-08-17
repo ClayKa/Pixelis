@@ -100,6 +100,14 @@ class CuriosityRewardModule(nn.Module):
         Returns:
             Tuple of (curiosity_reward, loss_dict)
         """
+        # Get the target device from the model itself
+        target_device = next(self.feature_encoder.parameters()).device
+        
+        # Move all input tensors to the target device
+        state = state.to(target_device)
+        action = action.to(target_device)
+        next_state = next_state.to(target_device)
+        
         # Encode states
         state_feat = self.feature_encoder(state)
         next_state_feat = self.feature_encoder(next_state)
@@ -190,7 +198,7 @@ class CuriosityRewardModule(nn.Module):
         """
         # Simplified action encoding
         # In practice, this would use a proper encoder
-        embedding = torch.randn(128)
+        embedding = torch.randn(128, device=self.device)
         
         # Add some structure based on action type
         if action.type == ActionType.VISUAL_OPERATION:

@@ -96,6 +96,13 @@ class LightweightDynamicsModel(nn.Module):
         Returns:
             Predicted next state
         """
+        # Get the target device from the model itself
+        target_device = next(self.base_forward.parameters()).device
+        
+        # Move all input tensors to the target device
+        state = state.to(target_device)
+        action = action.to(target_device)
+        
         # Concatenate state and action
         state_action = torch.cat([state, action], dim=-1)
         
