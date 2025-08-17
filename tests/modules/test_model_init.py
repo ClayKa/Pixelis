@@ -165,43 +165,41 @@ class TestLoRAInsertion(unittest.TestCase):
         
         return TestModel()
     
-    def test_lora_layer_insertion(self):
+    @patch('core.models.peft_model.get_peft_model', autospec=False)
+    def test_lora_layer_insertion(self, mock_get_peft):
         """Test that LoRA layers are correctly inserted"""
+        # Create a mock PEFT model
+        mock_peft_model = MagicMock()
+        mock_peft_model.named_parameters.return_value = [
+            ("lora_A", torch.nn.Parameter(torch.randn(8, 128))),
+            ("lora_B", torch.nn.Parameter(torch.randn(256, 8))),
+        ]
+        mock_get_peft.return_value = mock_peft_model
         
-        # Mock the PEFT library
-        with patch('core.models.peft_model.get_peft_model') as mock_get_peft:
-            # Create a mock PEFT model
-            mock_peft_model = MagicMock()
-            mock_peft_model.named_parameters.return_value = [
-                ("lora_A", torch.nn.Parameter(torch.randn(8, 128))),
-                ("lora_B", torch.nn.Parameter(torch.randn(256, 8))),
-            ]
-            mock_get_peft.return_value = mock_peft_model
+        # Test model creation
+        with patch('core.models.peft_model.DynamicLoRAConfig') as mock_config_class:
+            mock_config = MagicMock()
+            mock_config.get_layer_ranks.return_value = {"linear1": 8, "linear2": 16}
+            mock_config.get_compression_ratio.return_value = 0.1
+            mock_config.create_lora_config.return_value = MagicMock()
+            mock_config_class.return_value = mock_config
             
-            # Test model creation
-            with patch('core.models.peft_model.DynamicLoRAConfig') as mock_config_class:
-                mock_config = MagicMock()
-                mock_config.get_layer_ranks.return_value = {"linear1": 8, "linear2": 16}
-                mock_config.get_compression_ratio.return_value = 0.1
-                mock_config.create_lora_config.return_value = MagicMock()
-                mock_config_class.return_value = mock_config
-                
-                # Create PEFT model
-                peft_model, _ = PEFTModelFactory.create_peft_model_from_config(
-                    base_model=self.model,
-                    rank_config_path=str(self.test_config_path)
-                )
-                
-                # Verify get_peft_model was called
-                mock_get_peft.assert_called_once()
-                
-                # Verify the model can perform a forward pass
-                test_input = torch.randn(1, 128)
-                try:
-                    output = peft_model(test_input)
-                    self.assertIsNotNone(output)
-                except:
-                    pass  # Mock might not support forward pass
+            # Create PEFT model
+            peft_model, _ = PEFTModelFactory.create_peft_model_from_config(
+                base_model=self.model,
+                rank_config_path=str(self.test_config_path)
+            )
+            
+            # Verify get_peft_model was called
+            mock_get_peft.assert_called_once()
+            
+            # Verify the model can perform a forward pass
+            test_input = torch.randn(1, 128)
+            try:
+                output = peft_model(test_input)
+                self.assertIsNotNone(output)
+            except:
+                pass  # Mock might not support forward pass
     
     def test_heterogeneous_ranks(self):
         """Test that different layers get different ranks as configured"""
