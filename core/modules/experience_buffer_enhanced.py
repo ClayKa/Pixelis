@@ -388,8 +388,25 @@ class EnhancedExperienceBuffer:
                         return False
                 
                 # Update in-memory state (only after WAL writes succeed)
+                # Handle eviction from deque when at max capacity
+                evicted_id = None
+                if len(self.buffer) == self.config.buffer_size:
+                    # The oldest item will be evicted when we append
+                    evicted_id = self.buffer[0] if self.buffer else None
+                
                 self.buffer.append(experience.experience_id)
                 self.experience_dict[experience.experience_id] = experience
+                
+                # Clean up evicted experience from dictionary and index
+                if evicted_id is not None and evicted_id in self.experience_dict:
+                    evicted_experience = self.experience_dict.pop(evicted_id)
+                    # Also remove from index if present
+                    if self.index is not None:
+                        # Find and remove from index_to_id mapping
+                        index_ids_to_remove = [idx for idx, exp_id in self.index_to_id.items() if exp_id == evicted_id]
+                        for idx in index_ids_to_remove:
+                            del self.index_to_id[idx]
+                    logger.debug(f"Evicted experience {evicted_id} due to buffer overflow")
                 
                 # Add to index
                 if hybrid_embedding is not None:
@@ -693,7 +710,7 @@ class EnhancedExperienceBuffer:
     
     def size(self) -> int:
         """Get current buffer size."""
-        return len(self.experience_dict)
+        return len(self.buffer)
     
     def is_full(self) -> bool:
         """Check if buffer is at maximum capacity."""

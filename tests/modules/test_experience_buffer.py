@@ -465,19 +465,22 @@ class TestExperienceBuffer(unittest.TestCase):
         
         buffer = EnhancedExperienceBuffer(config)
         
-        # Add more than buffer size
-        for i in range(10):
-            exp = self._create_test_experience(f"exp-{i}")
-            buffer.add(exp)
-        
-        # Buffer should maintain max size
-        self.assertEqual(buffer.size(), 5)
-        
-        # Oldest experiences should be evicted
-        self.assertIsNone(buffer.get("exp-0"))
-        self.assertIsNotNone(buffer.get("exp-9"))
-        
-        buffer.shutdown()
+        try:
+            # Add more than buffer size
+            for i in range(10):
+                exp = self._create_test_experience(f"exp-{i}")
+                buffer.add(exp)
+            
+            # Buffer should maintain max size
+            self.assertEqual(buffer.size(), 5)
+            
+            # Oldest experiences should be evicted
+            self.assertIsNone(buffer.get("exp-0"))
+            self.assertIsNotNone(buffer.get("exp-9"))
+            
+        finally:
+            # Ensure cleanup always happens, even if test fails
+            buffer.shutdown()
     
     def test_statistics(self):
         """Test statistics calculation."""
