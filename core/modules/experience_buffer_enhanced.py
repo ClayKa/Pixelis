@@ -44,8 +44,7 @@ class IndexBuilder(Process):
         self,
         config: OnlineConfig,
         rebuild_trigger_queue: Queue,
-        index_ready_queue: Queue,
-        persistence_adapter: PersistenceAdapter
+        index_ready_queue: Queue
     ):
         """
         Initialize the IndexBuilder process.
@@ -54,18 +53,21 @@ class IndexBuilder(Process):
             config: Online configuration
             rebuild_trigger_queue: Queue to receive rebuild triggers
             index_ready_queue: Queue to signal index readiness
-            persistence_adapter: Persistence adapter for loading data
         """
         super().__init__()
         self.config = config
         self.rebuild_trigger_queue = rebuild_trigger_queue
         self.index_ready_queue = index_ready_queue
-        self.persistence_adapter = persistence_adapter
         self.shutdown_event = multiprocessing.Event()
+        # Persistence adapter will be created in run() method to avoid pickling issues
+        self.persistence_adapter = None
         
     def run(self):
         """Main process loop for index building."""
         logger.info("IndexBuilder process started")
+        
+        # Create persistence adapter in the child process to avoid pickling issues
+        self.persistence_adapter = create_persistence_adapter(self.config)
         
         while not self.shutdown_event.is_set():
             try:
@@ -245,8 +247,7 @@ class EnhancedExperienceBuffer:
             self.index_builder = IndexBuilder(
                 config,
                 self.rebuild_trigger_queue,
-                self.index_ready_queue,
-                self.persistence_adapter
+                self.index_ready_queue
             )
             self.index_builder.start()
             

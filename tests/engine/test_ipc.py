@@ -65,6 +65,27 @@ def worker_process_tensor_transfer(
         send_queue.put({'error': str(e), 'success': False})
 
 
+def echo_worker(input_queue, output_queue):
+    """Simple echo worker for bidirectional communication test."""
+    while True:
+        try:
+            msg = input_queue.get(timeout=1.0)
+            if msg is None:
+                break
+            output_queue.put(f"Echo: {msg}")
+        except Exception:
+            # Handle both mp.queues.Empty and queue.Empty
+            continue
+
+
+def error_worker(queue):
+    """Worker that raises an error for error handling test."""
+    try:
+        raise ValueError("Test error")
+    except Exception as e:
+        queue.put({"error": str(e)})
+
+
 class TestSharedMemoryTransfer:
     """Test shared memory tensor transfer between processes."""
     
@@ -294,17 +315,6 @@ class TestProcessCommunication:
     
     def test_bidirectional_communication(self):
         """Test bidirectional communication between processes."""
-        def echo_worker(input_queue, output_queue):
-            """Simple echo worker."""
-            while True:
-                try:
-                    msg = input_queue.get(timeout=1.0)
-                    if msg is None:
-                        break
-                    output_queue.put(f"Echo: {msg}")
-                except mp.queues.Empty:
-                    continue
-        
         # Create queues
         to_worker = mp.Queue()
         from_worker = mp.Queue()
@@ -339,13 +349,6 @@ class TestProcessCommunication:
     
     def test_process_error_handling(self):
         """Test error handling in process communication."""
-        def error_worker(queue):
-            """Worker that raises an error."""
-            try:
-                raise ValueError("Test error")
-            except Exception as e:
-                queue.put({"error": str(e)})
-        
         queue = mp.Queue()
         
         # Start worker
