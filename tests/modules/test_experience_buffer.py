@@ -98,9 +98,28 @@ class TestExperienceBuffer(unittest.TestCase):
         self.config.persistence_backend = "file"
         self.config.faiss_backend = "cpu"
         self.config.snapshot_interval = 10
+        
+        # Track all buffers created in tests for guaranteed cleanup
+        self.test_buffers = []
+    
+    def _create_buffer(self, config=None):
+        """Create a buffer with guaranteed cleanup tracking."""
+        if config is None:
+            config = self.config
+        buffer = EnhancedExperienceBuffer(config)
+        self.test_buffers.append(buffer)
+        return buffer
     
     def tearDown(self):
         """Clean up test fixtures."""
+        # GUARANTEED CLEANUP: Shutdown all buffers created during tests
+        for buffer in self.test_buffers:
+            try:
+                buffer.shutdown()
+            except Exception as e:
+                # Log but don't fail tearDown
+                print(f"Warning: Error shutting down buffer: {e}")
+        
         # Remove temporary directory
         if Path(self.temp_dir).exists():
             shutil.rmtree(self.temp_dir)
@@ -150,7 +169,7 @@ class TestExperienceBuffer(unittest.TestCase):
     
     def test_basic_add_and_get(self):
         """Test basic add and get operations."""
-        buffer = EnhancedExperienceBuffer(self.config)
+        buffer = self._create_buffer()
         
         # Create and add experience
         exp = self._create_test_experience("test-001")
@@ -163,12 +182,10 @@ class TestExperienceBuffer(unittest.TestCase):
         
         # Check buffer size
         self.assertEqual(buffer.size(), 1)
-        
-        buffer.shutdown()
     
     def test_duplicate_prevention(self):
         """Test that duplicate experiences are rejected."""
-        buffer = EnhancedExperienceBuffer(self.config)
+        buffer = self._create_buffer()
         
         # Add experience
         exp1 = self._create_test_experience("test-001")
@@ -180,12 +197,10 @@ class TestExperienceBuffer(unittest.TestCase):
         
         # Check size is still 1
         self.assertEqual(buffer.size(), 1)
-        
-        buffer.shutdown()
     
     def test_priority_calculation(self):
         """Test multi-factor priority calculation."""
-        buffer = EnhancedExperienceBuffer(self.config)
+        buffer = self._create_buffer()
         
         # Add experiences with different characteristics
         exp1 = self._create_test_experience("exp-1", confidence=0.9, reward=0.5)
@@ -203,11 +218,10 @@ class TestExperienceBuffer(unittest.TestCase):
             buffer.get("exp-1").priority
         )
         
-        buffer.shutdown()
     
     def test_priority_sampling(self):
         """Test priority-based sampling."""
-        buffer = EnhancedExperienceBuffer(self.config)
+        buffer = self._create_buffer()
         
         # Add experiences with different priorities
         for i in range(10):
@@ -224,11 +238,10 @@ class TestExperienceBuffer(unittest.TestCase):
         sampled_ids = [exp.experience_id for exp in sampled]
         self.assertEqual(len(sampled_ids), len(set(sampled_ids)))
         
-        buffer.shutdown()
     
     def test_hybrid_embedding_creation(self):
         """Test hybrid embedding creation."""
-        buffer = EnhancedExperienceBuffer(self.config)
+        buffer = self._create_buffer()
         
         # Create experience with both embeddings
         exp = self._create_test_experience("test-001")
@@ -253,11 +266,10 @@ class TestExperienceBuffer(unittest.TestCase):
             decimal=5
         )
         
-        buffer.shutdown()
     
     def test_knn_search(self):
         """Test k-NN search functionality."""
-        buffer = EnhancedExperienceBuffer(self.config)
+        buffer = self._create_buffer()
         
         # Add multiple experiences
         experiences = []
@@ -277,11 +289,10 @@ class TestExperienceBuffer(unittest.TestCase):
         for nid in neighbor_ids:
             self.assertIn(nid, [f"exp-{i}" for i in range(20)])
         
-        buffer.shutdown()
     
     def test_value_tracking(self):
         """Test value tracking with retrieval and success counts."""
-        buffer = EnhancedExperienceBuffer(self.config)
+        buffer = self._create_buffer()
         
         # Add experiences
         exp_ids = []
@@ -314,12 +325,11 @@ class TestExperienceBuffer(unittest.TestCase):
         self.assertEqual(exp.retrieval_count, 1)  # Still 1
         self.assertEqual(exp.success_count, 1)  # Still 1 (already updated)
         
-        buffer.shutdown()
     
     def test_persistence_save_and_load(self):
         """Test persistence with save and load."""
         # Create buffer and add experiences
-        buffer1 = EnhancedExperienceBuffer(self.config)
+        buffer1 = self._create_buffer()
         
         exp_ids = []
         for i in range(5):
@@ -331,7 +341,7 @@ class TestExperienceBuffer(unittest.TestCase):
         buffer1.shutdown()
         
         # Create new buffer (should load)
-        buffer2 = EnhancedExperienceBuffer(self.config)
+        buffer2 = self._create_buffer()
         
         # Check that experiences were loaded
         self.assertEqual(buffer2.size(), 5)
@@ -340,13 +350,11 @@ class TestExperienceBuffer(unittest.TestCase):
             exp = buffer2.get(exp_id)
             self.assertIsNotNone(exp)
             self.assertEqual(exp.experience_id, exp_id)
-        
-        buffer2.shutdown()
     
     def test_wal_recovery(self):
         """Test Write-Ahead Log recovery after crash."""
         # Create buffer and add experiences
-        buffer1 = EnhancedExperienceBuffer(self.config)
+        buffer1 = self._create_buffer()
         
         # Add some experiences
         for i in range(3):
@@ -366,7 +374,7 @@ class TestExperienceBuffer(unittest.TestCase):
         del buffer1
         
         # Create new buffer (should recover from snapshot + WAL)
-        buffer2 = EnhancedExperienceBuffer(self.config)
+        buffer2 = self._create_buffer()
         
         # Check all experiences are recovered
         self.assertEqual(buffer2.size(), 6)
@@ -374,8 +382,6 @@ class TestExperienceBuffer(unittest.TestCase):
         for i in range(6):
             exp = buffer2.get(f"exp-{i}")
             self.assertIsNotNone(exp)
-        
-        buffer2.shutdown()
     
     def test_concurrent_writes(self):
         """Test concurrent write safety."""
@@ -414,7 +420,7 @@ class TestExperienceBuffer(unittest.TestCase):
         config.faiss_use_gpu_fallback = True
         
         # This should fallback to CPU if GPU not available
-        buffer = EnhancedExperienceBuffer(config)
+        buffer = self._create_buffer(config)
         
         # Add experience and search
         exp = self._create_test_experience("test-001")
@@ -422,8 +428,6 @@ class TestExperienceBuffer(unittest.TestCase):
         
         neighbors = buffer.search_index(exp, k=1)
         self.assertEqual(len(neighbors), 1)
-        
-        buffer.shutdown()
     
     def test_lmdb_persistence(self):
         """Test LMDB persistence adapter."""
@@ -440,7 +444,7 @@ class TestExperienceBuffer(unittest.TestCase):
         config.persistence_backend = "lmdb"
         
         # Create buffer with LMDB
-        buffer = EnhancedExperienceBuffer(config)
+        buffer = self._create_buffer(config)
         
         # Add experiences
         for i in range(5):
@@ -450,10 +454,8 @@ class TestExperienceBuffer(unittest.TestCase):
         buffer.shutdown()
         
         # Create new buffer (should load from LMDB)
-        buffer2 = EnhancedExperienceBuffer(config)
+        buffer2 = self._create_buffer(config)
         self.assertEqual(buffer2.size(), 5)
-        
-        buffer2.shutdown()
     
     def test_buffer_overflow(self):
         """Test buffer behavior when full."""
@@ -463,7 +465,7 @@ class TestExperienceBuffer(unittest.TestCase):
         config.persistence_path = self.temp_dir
         config.enable_persistence = False
         
-        buffer = EnhancedExperienceBuffer(config)
+        buffer = self._create_buffer(config)
         
         try:
             # Add more than buffer size
@@ -484,7 +486,7 @@ class TestExperienceBuffer(unittest.TestCase):
     
     def test_statistics(self):
         """Test statistics calculation."""
-        buffer = EnhancedExperienceBuffer(self.config)
+        buffer = self._create_buffer()
         
         # Add experiences with varying characteristics
         for i in range(10):
@@ -502,8 +504,6 @@ class TestExperienceBuffer(unittest.TestCase):
         self.assertEqual(stats["total_additions"], 10)
         self.assertGreater(stats["avg_confidence"], 0)
         self.assertGreater(stats["avg_priority"], 0)
-        
-        buffer.shutdown()
     
     def test_index_rebuild(self):
         """Test asynchronous index rebuild."""
@@ -514,7 +514,7 @@ class TestExperienceBuffer(unittest.TestCase):
         config.enable_persistence = True
         config.snapshot_interval = 5
         
-        buffer = EnhancedExperienceBuffer(config)
+        buffer = self._create_buffer(config)
         
         # Add experiences to trigger rebuild
         for i in range(6):
@@ -527,12 +527,10 @@ class TestExperienceBuffer(unittest.TestCase):
         
         # Index should be rebuilt
         self.assertGreaterEqual(buffer.index.ntotal, 6)
-        
-        buffer.shutdown()
     
     def test_empty_buffer_operations(self):
         """Test operations on empty buffer."""
-        buffer = EnhancedExperienceBuffer(self.config)
+        buffer = self._create_buffer()
         
         # Test get on empty buffer
         self.assertIsNone(buffer.get("non-existent"))
@@ -549,8 +547,6 @@ class TestExperienceBuffer(unittest.TestCase):
         # Test statistics on empty buffer
         stats = buffer.get_statistics()
         self.assertEqual(stats["size"], 0)
-        
-        buffer.shutdown()
 
 
 class TestPersistenceAdapters(unittest.TestCase):
