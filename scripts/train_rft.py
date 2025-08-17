@@ -171,6 +171,11 @@ class EnhancedCuriosityModule(nn.Module):
         Returns:
             Tuple of (curiosity_reward, metrics)
         """
+        # Ensure all tensors are on the correct device
+        state = state.to(self.device)
+        action = action.to(self.device)
+        next_state = next_state.to(self.device)
+        
         # Check cache
         cache_key = (state.cpu().numpy().tobytes(), action.cpu().numpy().tobytes())
         if cache_key in self.cache:
@@ -203,14 +208,19 @@ class EnhancedCuriosityModule(nn.Module):
             'prediction_error': prediction_error.mean().item()
         })
         
+        # Add to cache with LRU eviction
+        if cache_key not in self.cache:
+            # If cache is at max capacity, remove oldest item
+            if len(self.cache) >= self.cache_keys.maxlen:
+                # The deque will automatically remove the oldest key when we append
+                # But we need to manually remove it from the cache dict
+                if len(self.cache_keys) == self.cache_keys.maxlen:
+                    oldest_key = self.cache_keys[0]
+                    if oldest_key in self.cache:
+                        del self.cache[oldest_key]
+        
         self.cache[cache_key] = result
         self.cache_keys.append(cache_key)
-        
-        # Remove oldest cache entry if needed
-        if len(self.cache_keys) > self.cache_keys.maxlen:
-            old_key = self.cache_keys[0]
-            if old_key in self.cache:
-                del self.cache[old_key]
         
         return result
 
@@ -394,10 +404,14 @@ class EnhancedRewardOrchestrator:
         self.curiosity_weight = config.get('curiosity_reward_weight', 0.3)
         self.coherence_weight = config.get('coherence_reward_weight', 0.2)
         
+        # Get device from config or default to cuda if available
+        self.device = config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu')
+        
         # Initialize modules
         self.curiosity_module = EnhancedCuriosityModule(
             beta=config.get('curiosity_beta', 0.2),
-            eta=config.get('curiosity_eta', 0.5)
+            eta=config.get('curiosity_eta', 0.5),
+            device=self.device
         )
         
         self.coherence_analyzer = EnhancedCoherenceAnalyzer(
@@ -981,7 +995,7 @@ def parse_trajectory(response: str) -> List[Dict[str, Any]]:
     # Look for action patterns
     lines = response.split('\n')
     for line in lines:
-        if any(op in line for op in ['SEGMENT_OBJECT_AT', 'READ_TEXT', 'TRACK_OBJECT', 'ZOOM_IN']):
+        if any(op in line for op in ['SEGMENT_OBJECT_AT', 'READ_TEXT', 'TRACK_OBJECT', 'ZOOM_IN', 'GET_PROPERTIES']):
             # Extract operation
             for op in ['SEGMENT_OBJECT_AT', 'READ_TEXT', 'TRACK_OBJECT', 'ZOOM_IN', 'GET_PROPERTIES']:
                 if op in line:

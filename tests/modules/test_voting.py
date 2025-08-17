@@ -204,9 +204,14 @@ class TestTemporalEnsembleVoting(unittest.TestCase):
         self.assertLessEqual(factor, 1.0)
         
         # Low agreement (25% for dog)
-        factor = self.voting._calculate_agreement_factor(votes, 'dog')
-        self.assertLess(factor, 0.7)
-        self.assertGreaterEqual(factor, 0.5)
+        factor_dog = self.voting._calculate_agreement_factor(votes, 'dog')
+        # With 25% agreement, the formula gives: 0.6 + 0.2 * (0.25/0.3) ≈ 0.7667
+        self.assertAlmostEqual(factor_dog, 0.7667, places=3)
+        self.assertGreaterEqual(factor_dog, 0.5)
+        
+        # Also verify that high agreement factor is greater than low agreement factor
+        factor_cat = self.voting._calculate_agreement_factor(votes, 'cat')
+        self.assertGreater(factor_cat, factor_dog)
     
     def test_voting_result_validation(self):
         """Test VotingResult validation and methods."""

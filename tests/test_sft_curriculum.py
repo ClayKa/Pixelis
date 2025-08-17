@@ -137,6 +137,7 @@ def test_curriculum_manager():
     
     # Test advancement check
     manager.steps_since_advance = 60
+    manager.steps_since_rollback = 101  # Must be > rollback_cooldown (100) to allow advancement
     assert manager.should_attempt_advance(global_step=100) == True
     
     manager.steps_since_advance = 30
