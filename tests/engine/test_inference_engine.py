@@ -446,5 +446,618 @@ class TestIntegration(unittest.TestCase):
         self.assertLessEqual(strength, 1.0)
 
 
+class TestInferenceEngineEdgeCases(unittest.TestCase):
+    """Test edge cases and error scenarios for InferenceEngine to improve coverage."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        # Create mock components
+        self.mock_model = MagicMock()
+        self.mock_buffer = MagicMock()
+        self.mock_voting = MagicMock()
+        self.mock_orchestrator = MagicMock()
+        
+        # Create config with all edge case settings
+        self.config = {
+            'confidence_threshold': 0.7,
+            'min_learning_rate': 1e-6,
+            'max_learning_rate': 1e-4,
+            'hil_mode_enabled': True,
+            'hil_review_percentage': 0.05,
+            'k_neighbors': 5,
+            'voting_strategy': 'weighted',
+            'max_queue_size': 100,
+            'shm_timeout': 60.0,
+            'watchdog_interval': 5.0,
+            'cold_start_threshold': 100,
+            'enable_pii_redaction': True,
+            'enable_metadata_stripping': True,
+            'enable_differential_privacy': False,
+            'log_privacy_stats': True,
+            'read_only_mode': False,
+            'monitoring_interval': 10.0
+        }
+        
+        # Create inference engine
+        self.engine = InferenceEngine(
+            model=self.mock_model,
+            experience_buffer=self.mock_buffer,
+            voting_module=self.mock_voting,
+            reward_orchestrator=self.mock_orchestrator,
+            config=self.config
+        )
+    
+    def test_shared_memory_manager_age_calculation(self):
+        """Test SharedMemoryInfo age calculation."""
+        from datetime import datetime, timedelta
+        from core.engine.inference_engine import SharedMemoryInfo
+        
+        # Create info with past timestamp
+        past_time = datetime.now() - timedelta(seconds=30)
+        shm_info = SharedMemoryInfo(
+            name="test_shm",
+            shape=(10, 20),
+            dtype=torch.float32,
+            created_at=past_time,
+            size_bytes=800
+        )
+        
+        age = shm_info.age_seconds()
+        self.assertGreater(age, 25)  # Should be around 30 seconds
+        self.assertLess(age, 35)
+    
+    def test_shared_memory_manager_cuda_tensor(self):
+        """Test shared memory creation with CUDA tensor."""
+        # Mock CUDA tensor
+        mock_tensor = MagicMock()
+        mock_tensor.is_cuda = True
+        mock_tensor.shape = (5, 10)
+        mock_tensor.dtype = torch.float32
+        mock_cpu_tensor = MagicMock()
+        mock_cpu_tensor.is_pinned = False
+        mock_tensor.to.return_value = mock_cpu_tensor
+        mock_cpu_tensor.pin_memory.return_value = mock_cpu_tensor
+        mock_storage = MagicMock()
+        mock_cpu_tensor.storage.return_value = mock_storage
+        mock_storage._share_memory_.return_value = mock_storage
+        mock_cpu_tensor.element_size.return_value = 4
+        mock_cpu_tensor.numel.return_value = 50
+        
+        shm_info = self.engine.shm_manager.create_shared_tensor(mock_tensor)
+        
+        # Verify CUDA tensor was moved to CPU
+        mock_tensor.to.assert_called_with('cpu', non_blocking=True)
+        mock_cpu_tensor.pin_memory.assert_called_once()
+        
+        self.assertEqual(shm_info.shape, (5, 10))
+        self.assertEqual(shm_info.size_bytes, 200)
+    
+    def test_shared_memory_manager_already_pinned_tensor(self):
+        """Test shared memory creation with already pinned tensor."""
+        mock_tensor = MagicMock()
+        mock_tensor.is_cuda = False
+        mock_tensor.is_pinned = True
+        mock_tensor.shape = (3, 4)
+        mock_tensor.dtype = torch.int32
+        mock_storage = MagicMock()
+        mock_tensor.storage.return_value = mock_storage
+        mock_storage._share_memory_.return_value = mock_storage
+        mock_tensor.element_size.return_value = 4
+        mock_tensor.numel.return_value = 12
+        
+        shm_info = self.engine.shm_manager.create_shared_tensor(mock_tensor)
+        
+        # Should not call pin_memory since already pinned
+        mock_tensor.pin_memory.assert_not_called()
+        self.assertEqual(shm_info.shape, (3, 4))
+    
+    def test_shared_memory_manager_cleanup_worker_dead(self):
+        """Test shared memory cleanup when worker is dead."""
+        # Create a segment
+        mock_tensor = torch.randn(2, 3)
+        shm_info = self.engine.shm_manager.create_shared_tensor(mock_tensor)
+        
+        # Clean up with worker dead
+        cleaned = self.engine.shm_manager.cleanup_stale_segments(worker_alive=False)
+        
+        self.assertEqual(len(cleaned), 1)
+        self.assertEqual(cleaned[0], shm_info.name)
+    
+    def test_shared_memory_manager_get_status_empty(self):
+        """Test shared memory manager status when empty."""
+        status = self.engine.shm_manager.get_status()
+        
+        self.assertEqual(status['pending_segments'], 0)
+        self.assertEqual(status['total_bytes'], 0)
+        self.assertEqual(status['oldest_segment_age'], 0)
+    
+    def test_shared_memory_manager_unlink_error(self):
+        """Test shared memory unlink error handling."""
+        # Create a segment
+        mock_tensor = torch.randn(2, 3)
+        shm_info = self.engine.shm_manager.create_shared_tensor(mock_tensor)
+        
+        # Mock cached storage to raise error on deletion
+        self.engine.shm_manager._shared_memory_cache[shm_info.name] = MagicMock()
+        
+        with patch('builtins.delattr', side_effect=Exception("Delete error")):
+            # Should handle error gracefully
+            self.engine.shm_manager._unlink_segment(shm_info.name)
+    
+    def test_init_read_only_mode(self):
+        """Test initialization in read-only mode."""
+        self.config['read_only_mode'] = True
+        
+        engine = InferenceEngine(
+            model=self.mock_model,
+            experience_buffer=self.mock_buffer,
+            voting_module=self.mock_voting,
+            reward_orchestrator=self.mock_orchestrator,
+            config=self.config
+        )
+        
+        self.assertTrue(engine.read_only_mode)
+    
+    @patch('core.engine.inference_engine.asyncio.run')
+    async def test_infer_and_adapt_read_only_mode(self):
+        """Test inference in read-only mode bypasses all updates."""
+        self.engine.read_only_mode = True
+        self.mock_buffer.__len__ = MagicMock(return_value=200)  # Above cold start
+        
+        # Setup mock returns
+        mock_prediction = {'answer': 'cat', 'confidence': 0.8}
+        self.engine._get_model_prediction = AsyncMock(return_value=mock_prediction)
+        
+        mock_neighbors = [MagicMock() for _ in range(5)]
+        self.mock_buffer.search_index = MagicMock(return_value=mock_neighbors)
+        
+        mock_voting_result = MagicMock()
+        mock_voting_result.final_answer = {'answer': 'cat', 'trajectory': []}
+        mock_voting_result.confidence = 0.85
+        mock_voting_result.provenance = {'source': 'ensemble'}
+        self.mock_voting.vote = MagicMock(return_value=mock_voting_result)
+        
+        input_data = {'image_features': torch.randn(1, 512), 'question': 'What is this?'}
+        
+        result_dict, confidence, metadata = await self.engine.infer_and_adapt(input_data)
+        
+        # Verify read-only behavior
+        self.assertTrue(metadata['read_only'])
+        self.assertEqual(metadata['update_path'], 'disabled')
+        self.assertEqual(result_dict['answer'], 'cat')
+    
+    @patch('core.engine.inference_engine.asyncio.run')
+    async def test_infer_and_adapt_knn_failure(self):
+        """Test inference when k-NN retrieval fails."""
+        self.mock_buffer.__len__ = MagicMock(return_value=200)  # Above cold start
+        
+        # Setup model prediction
+        mock_prediction = {'answer': 'dog', 'confidence': 0.7}
+        self.engine._get_model_prediction = AsyncMock(return_value=mock_prediction)
+        
+        # Mock k-NN to fail
+        self.mock_buffer.search_index = MagicMock(side_effect=Exception("FAISS error"))
+        
+        input_data = {'image_features': torch.randn(1, 512), 'question': 'What is this?'}
+        
+        result_dict, confidence, metadata = await self.engine.infer_and_adapt(input_data)
+        
+        # Should handle k-NN failure gracefully
+        self.assertIn('knn_failure', metadata)
+        self.assertEqual(metadata['knn_failure'], 'FAISS error')
+        self.assertEqual(self.engine.stats['faiss_failures'], 1)
+    
+    @patch('core.engine.inference_engine.asyncio.run')
+    async def test_infer_and_adapt_voting_failure(self):
+        """Test inference when voting fails."""
+        self.mock_buffer.__len__ = MagicMock(return_value=200)  # Above cold start
+        
+        # Setup model prediction
+        mock_prediction = {'answer': 'bird', 'confidence': 0.6}
+        self.engine._get_model_prediction = AsyncMock(return_value=mock_prediction)
+        
+        # Setup successful k-NN
+        mock_neighbors = [MagicMock() for _ in range(3)]
+        self.mock_buffer.search_index = MagicMock(return_value=mock_neighbors)
+        
+        # Mock voting to fail
+        self.mock_voting.vote = MagicMock(side_effect=RuntimeError("Voting error"))
+        
+        input_data = {'image_features': torch.randn(1, 512), 'question': 'What is this?'}
+        
+        result_dict, confidence, metadata = await self.engine.infer_and_adapt(input_data)
+        
+        # Should create fallback result
+        self.assertIn('voting_failure', metadata)
+        self.assertEqual(metadata['voting_failure'], 'Voting error')
+        self.assertEqual(result_dict['answer'], 'bird')
+        self.assertEqual(confidence, 0.6)
+    
+    @patch('core.engine.inference_engine.asyncio.run')
+    async def test_infer_and_adapt_critical_error(self):
+        """Test inference when critical error occurs."""
+        # Mock model prediction to fail
+        self.engine._get_model_prediction = AsyncMock(side_effect=Exception("Critical error"))
+        
+        input_data = {'image_features': torch.randn(1, 512), 'question': 'What is this?'}
+        
+        result_dict, confidence, metadata = await self.engine.infer_and_adapt(input_data)
+        
+        # Should return error response
+        self.assertIsNone(result_dict)
+        self.assertEqual(confidence, 0.0)
+        self.assertIn('error', metadata)
+        self.assertEqual(metadata['inference_path'], 'error')
+        self.assertEqual(self.engine.stats['critical_failures'], 1)
+    
+    @patch('core.engine.inference_engine.asyncio.run')
+    async def test_infer_and_adapt_prediction_not_dict(self):
+        """Test inference when model prediction is not a dictionary."""
+        self.mock_buffer.__len__ = MagicMock(return_value=50)  # Cold start mode
+        
+        # Return non-dict prediction
+        self.engine._get_model_prediction = AsyncMock(return_value="simple_answer")
+        
+        input_data = {'image_features': torch.randn(1, 512), 'question': 'What is this?'}
+        
+        result_dict, confidence, metadata = await self.engine.infer_and_adapt(input_data)
+        
+        # Should handle non-dict prediction
+        self.assertEqual(result_dict['answer'], 'simple_answer')
+        self.assertEqual(result_dict['trajectory'], [])
+        self.assertTrue(metadata['cold_start_active'])
+    
+    async def test_add_bootstrap_experience(self):
+        """Test adding bootstrap experience during cold start."""
+        input_data = {'image_features': torch.randn(1, 512), 'question': 'Test question'}
+        prediction = {'answer': 'test_answer', 'confidence': 0.8}
+        
+        # Mock experience buffer methods
+        self.mock_buffer.add_experience = AsyncMock()
+        
+        await self.engine._add_bootstrap_experience(input_data, prediction)
+        
+        # Verify experience was added with high priority
+        self.mock_buffer.add_experience.assert_called_once()
+        args = self.mock_buffer.add_experience.call_args[0]
+        experience = args[0]
+        priority = args[1] if len(args) > 1 else None
+        
+        # Check high priority for rapid memory building
+        self.assertIsNotNone(priority)
+    
+    def test_get_queue_sizes(self):
+        """Test queue size monitoring."""
+        # Add some items to queues for testing
+        self.engine.request_queue.put("test1")
+        self.engine.response_queue.put("test2")
+        self.engine.update_queue.put("test3")
+        
+        sizes = self.engine._get_queue_sizes()
+        
+        self.assertIn('request_queue', sizes)
+        self.assertIn('response_queue', sizes)
+        self.assertIn('update_queue', sizes)
+        self.assertIn('human_review_queue', sizes)
+        
+        # Clean up queues
+        while not self.engine.request_queue.empty():
+            self.engine.request_queue.get_nowait()
+        while not self.engine.response_queue.empty():
+            self.engine.response_queue.get_nowait()
+        while not self.engine.update_queue.empty():
+            self.engine.update_queue.get_nowait()
+    
+    def test_log_inference_metrics(self):
+        """Test inference metrics logging."""
+        metrics = {
+            'mode': 'ensemble',
+            'buffer_size': 150,
+            'confidence': 0.82,
+            'update_triggered': True,
+            'neighbors_used': 5,
+            'inference_time': 0.15,
+            'queue_sizes': {'request_queue': 0, 'response_queue': 0}
+        }
+        
+        # Should not raise exception
+        self.engine._log_inference_metrics(metrics)
+    
+    async def test_enqueue_update_task(self):
+        """Test enqueueing update tasks."""
+        input_data = {'image_features': torch.randn(1, 512), 'question': 'Test'}
+        
+        mock_voting_result = MagicMock()
+        mock_voting_result.final_answer = {'answer': 'cat'}
+        mock_voting_result.confidence = 0.85
+        
+        mock_prediction = {'answer': 'cat', 'confidence': 0.8, 'logits': torch.randn(1, 100)}
+        
+        # Mock reward calculation
+        self.mock_orchestrator.calculate_reward = MagicMock(return_value=torch.tensor(0.9))
+        
+        await self.engine._enqueue_update_task(input_data, mock_voting_result, mock_prediction)
+        
+        # Verify update was queued
+        self.assertFalse(self.engine.update_queue.empty())
+        task = self.engine.update_queue.get_nowait()
+        self.assertIsNotNone(task)
+    
+    async def test_enqueue_human_review_task(self):
+        """Test enqueueing human review tasks."""
+        input_data = {'image_features': torch.randn(1, 512), 'question': 'Test HIL'}
+        
+        mock_voting_result = MagicMock()
+        mock_voting_result.final_answer = {'answer': 'dog'}
+        mock_voting_result.confidence = 0.75
+        
+        mock_prediction = {'answer': 'dog', 'confidence': 0.7}
+        
+        await self.engine._enqueue_human_review_task(input_data, mock_voting_result, mock_prediction)
+        
+        # Verify HIL task was queued
+        self.assertFalse(self.engine.human_review_queue.empty())
+        hil_task = self.engine.human_review_queue.get_nowait()
+        self.assertIsNotNone(hil_task)
+    
+    async def test_add_to_experience_buffer(self):
+        """Test adding experience to buffer."""
+        input_data = {'image_features': torch.randn(1, 512), 'question': 'Buffer test'}
+        
+        mock_voting_result = MagicMock()
+        mock_voting_result.final_answer = {'answer': 'buffer_answer'}
+        mock_voting_result.confidence = 0.9
+        
+        mock_prediction = {'answer': 'buffer_answer', 'confidence': 0.85}
+        
+        # Mock buffer add method
+        self.mock_buffer.add_experience = AsyncMock()
+        
+        await self.engine._add_to_experience_buffer(input_data, mock_voting_result, mock_prediction)
+        
+        # Verify experience was added
+        self.mock_buffer.add_experience.assert_called_once()
+    
+    def test_shared_memory_queue_integration(self):
+        """Test shared memory queue integration."""
+        # Test that cleanup confirmation queue works
+        test_segment = 'test_segment'
+        self.engine.cleanup_confirmation_queue.put(test_segment)
+        
+        # Verify item was queued
+        import queue
+        try:
+            retrieved = self.engine.cleanup_confirmation_queue.get_nowait()
+            self.assertEqual(retrieved, test_segment)
+        except queue.Empty:
+            self.fail("Item was not properly queued")
+    
+    def test_process_cleanup_confirmations_empty_queue(self):
+        """Test cleanup confirmation processing with empty queue."""
+        # Should handle empty queue gracefully
+        if hasattr(self.engine, '_process_cleanup_confirmations'):
+            self.engine._process_cleanup_confirmations()
+        # No assertions needed - just verify no exceptions
+    
+    def test_start_watchdog(self):
+        """Test starting the watchdog thread."""
+        self.engine.start_watchdog()
+        
+        self.assertTrue(self.engine.watchdog_running)
+        self.assertIsNotNone(self.engine.watchdog_thread)
+        self.assertTrue(self.engine.watchdog_thread.is_alive())
+        
+        # Clean up
+        self.engine.shutdown()
+    
+    def test_start_monitoring(self):
+        """Test starting the monitoring thread."""
+        self.engine.start_monitoring()
+        
+        self.assertTrue(self.engine.monitoring_running)
+        self.assertIsNotNone(self.engine.monitoring_thread)
+        self.assertTrue(self.engine.monitoring_thread.is_alive())
+        
+        # Clean up
+        self.engine.shutdown()
+    
+    def test_watchdog_shared_memory_cleanup(self):
+        """Test watchdog shared memory cleanup functionality."""
+        # Add a stale segment
+        from core.engine.inference_engine import SharedMemoryInfo
+        from datetime import datetime, timedelta
+        stale_info = SharedMemoryInfo(
+            name="stale_segment",
+            shape=(5, 5),
+            dtype=torch.float32,
+            created_at=datetime.now() - timedelta(seconds=70),  # Older than timeout
+            size_bytes=100
+        )
+        self.engine.shm_manager.pending_shm["stale_segment"] = stale_info
+        
+        # Manually trigger cleanup (since actual watchdog loop is complex)
+        cleaned = self.engine.shm_manager.cleanup_stale_segments(worker_alive=True)
+        
+        # Verify cleanup occurred
+        self.assertEqual(len(cleaned), 1)
+        self.assertEqual(cleaned[0], "stale_segment")
+        self.assertNotIn("stale_segment", self.engine.shm_manager.pending_shm)
+    
+    def test_monitoring_integration(self):
+        """Test monitoring system health checks."""
+        # Set up some stats
+        with self.engine.stats_lock:
+            self.engine.stats['total_requests'] = 100
+            self.engine.stats['failed_updates'] = 5
+            self.engine.stats['critical_failures'] = 1
+        
+        # Test that monitoring components exist
+        self.assertIsNotNone(self.engine.health_monitor)
+        self.assertIsNotNone(self.engine.alerter)
+        
+        # Verify monitoring configuration
+        self.assertEqual(self.engine.monitoring_interval, 10.0)
+    
+    def test_shutdown_cleanup(self):
+        """Test shutdown cleanup."""
+        # Start watchdog and monitoring
+        self.engine.start_watchdog()
+        
+        # Verify they're running
+        self.assertTrue(self.engine.watchdog_running)
+        self.assertTrue(self.engine.monitoring_running)
+        
+        # Shutdown
+        self.engine.shutdown()
+        
+        # Verify cleanup
+        self.assertFalse(self.engine.watchdog_running)
+        self.assertFalse(self.engine.monitoring_running)
+    
+    def test_human_review_counter_increment(self):
+        """Test HIL review counter increments correctly."""
+        initial_count = self.engine.hil_review_counter
+        
+        # Call review decision multiple times
+        for i in range(10):
+            should_review = self.engine._should_request_human_review()
+            if should_review:
+                # Counter should increment
+                self.assertGreater(self.engine.hil_review_counter, initial_count)
+                initial_count = self.engine.hil_review_counter
+    
+    def test_process_human_review_decision_edge_cases(self):
+        """Test human review decision processing with edge cases."""
+        # Test with missing task
+        self.engine.process_human_review_decision(
+            task_id="nonexistent_task",
+            approved=True,
+            reviewer_notes="Task not found"
+        )
+        
+        # Should handle gracefully
+        self.assertEqual(self.engine.stats.get('human_approvals', 0), 1)
+        
+        # Test with empty notes
+        self.engine.process_human_review_decision(
+            task_id="empty_notes_task",
+            approved=False,
+            reviewer_notes=""
+        )
+        
+        self.assertEqual(self.engine.stats.get('human_rejections', 0), 1)
+    
+    def test_privacy_anonymizer_integration(self):
+        """Test privacy anonymizer integration."""
+        # Verify data anonymizer was initialized
+        self.assertIsNotNone(self.engine.data_anonymizer)
+        
+        # Test that privacy config was set up correctly
+        privacy_config = self.engine.data_anonymizer.config
+        self.assertTrue(privacy_config.enable_pii_redaction)
+        self.assertTrue(privacy_config.enable_image_metadata_stripping)
+        self.assertFalse(privacy_config.enable_differential_privacy)
+        self.assertTrue(privacy_config.log_redaction_stats)
+    
+    def test_health_monitor_integration(self):
+        """Test health monitor and alerter integration."""
+        # Verify components were initialized
+        self.assertIsNotNone(self.engine.health_monitor)
+        self.assertIsNotNone(self.engine.alerter)
+        
+        # Test that monitoring configuration is correct
+        self.assertEqual(self.engine.monitoring_interval, 10.0)
+    
+    def test_model_prediction_interface(self):
+        """Test model prediction interface."""
+        input_data = {'question': 'test', 'image_features': torch.randn(1, 512)}
+        
+        # Mock model forward method
+        expected_result = {'answer': 'interface_test', 'confidence': 0.95}
+        self.mock_model.forward = MagicMock(return_value=expected_result)
+        
+        # Test the async wrapper
+        loop = asyncio.new_event_loop()
+        result = loop.run_until_complete(self.engine._get_model_prediction(input_data))
+        
+        self.assertEqual(result, expected_result)
+        self.mock_model.forward.assert_called_once_with(input_data)
+
+
+class TestSharedMemoryManagerAdvanced(unittest.TestCase):
+    """Advanced tests for SharedMemoryManager."""
+    
+    def setUp(self):
+        """Set up test fixtures."""
+        from core.engine.inference_engine import SharedMemoryManager
+        self.shm_manager = SharedMemoryManager(timeout_seconds=2.0)
+    
+    def test_reconstruct_tensor_warning(self):
+        """Test tensor reconstruction warning message."""
+        from core.engine.inference_engine import SharedMemoryInfo
+        from datetime import datetime
+        
+        shm_info = SharedMemoryInfo(
+            name="test_warning",
+            shape=(3, 4),
+            dtype=torch.float64,
+            created_at=datetime.now(),
+            size_bytes=96
+        )
+        
+        with patch('core.engine.inference_engine.logger') as mock_logger:
+            tensor = self.shm_manager.reconstruct_tensor(shm_info)
+            
+            # Verify warning was logged
+            mock_logger.warning.assert_called_once()
+            warning_msg = mock_logger.warning.call_args[0][0]
+            self.assertIn("placeholder tensor reconstruction", warning_msg)
+            self.assertIn("test_warning", warning_msg)
+        
+        # Verify placeholder tensor properties
+        self.assertEqual(tensor.shape, (3, 4))
+        self.assertEqual(tensor.dtype, torch.float64)
+    
+    def test_create_shared_tensor_uuid_uniqueness(self):
+        """Test that shared memory names are unique."""
+        tensor1 = torch.randn(2, 2)
+        tensor2 = torch.randn(2, 2)
+        
+        shm_info1 = self.shm_manager.create_shared_tensor(tensor1)
+        shm_info2 = self.shm_manager.create_shared_tensor(tensor2)
+        
+        # Names should be different
+        self.assertNotEqual(shm_info1.name, shm_info2.name)
+        
+        # Both should be tracked
+        self.assertIn(shm_info1.name, self.shm_manager.pending_shm)
+        self.assertIn(shm_info2.name, self.shm_manager.pending_shm)
+    
+    def test_cleanup_mixed_segments(self):
+        """Test cleanup with mixed fresh and stale segments."""
+        from datetime import datetime, timedelta
+        
+        # Create fresh and stale segments
+        fresh_tensor = torch.randn(2, 2)
+        stale_tensor = torch.randn(3, 3)
+        
+        fresh_info = self.shm_manager.create_shared_tensor(fresh_tensor)
+        stale_info = self.shm_manager.create_shared_tensor(stale_tensor)
+        
+        # Make one segment stale
+        self.shm_manager.pending_shm[stale_info.name].created_at = (
+            datetime.now() - timedelta(seconds=5)
+        )
+        
+        # Cleanup stale segments
+        cleaned = self.shm_manager.cleanup_stale_segments(worker_alive=True)
+        
+        # Only stale segment should be cleaned
+        self.assertEqual(len(cleaned), 1)
+        self.assertEqual(cleaned[0], stale_info.name)
+        self.assertNotIn(stale_info.name, self.shm_manager.pending_shm)
+        self.assertIn(fresh_info.name, self.shm_manager.pending_shm)
+
+
 if __name__ == '__main__':
     unittest.main()
