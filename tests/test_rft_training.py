@@ -543,7 +543,7 @@ class TestGRPOTrainer:
         trainer.group_size = 4
         
         # Mock parent class method
-        def mock_compute_advantages(values, rewards, mask):
+        def mock_compute_advantages(self, values, rewards, mask):
             return torch.randn(12)  # Return random advantages
         
         GRPOTrainer.compute_advantages = mock_compute_advantages

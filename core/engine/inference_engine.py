@@ -165,6 +165,7 @@ class SharedMemoryManager:
             
             for shm_name, shm_info in list(self.pending_shm.items()):
                 age = shm_info.age_seconds()
+                logger.debug(f"[Watchdog] Checking segment {shm_name}, age: {age:.2f}s, timeout: {self.timeout_seconds}s")
                 
                 # Clean if: timeout exceeded OR worker is dead
                 if age > self.timeout_seconds or not worker_alive:
@@ -839,16 +840,20 @@ class InferenceEngine:
         max_restart_failures = 3
         restart_cooldown = 5.0  # Seconds to wait before restart
         
+        logger.debug(f"[Watchdog] Starting watchdog loop with interval {self.watchdog_interval}s")
+        
         while self.watchdog_running:
             try:
                 # Process cleanup confirmations
                 self._process_cleanup_confirmations()
                 
                 # Check worker health (Task 006: Action 1)
-                worker_alive = (
-                    self.update_worker_process is not None and 
-                    self.update_worker_process.is_alive()
-                )
+                # If worker was never started, consider it as "alive" for cleanup purposes
+                # This allows testing timeout-based cleanup without a worker
+                if self.update_worker_process is None:
+                    worker_alive = True  # No worker started, don't clean based on worker status
+                else:
+                    worker_alive = self.update_worker_process.is_alive()
                 
                 # Task 006: Action 2 - Implement restart mechanism
                 if not worker_alive and self.update_worker_process is not None:
@@ -946,11 +951,14 @@ class InferenceEngine:
                         consecutive_restart_failures = 0
                     
                     # Clean up any stale segments
+                    logger.debug(f"[Watchdog] Checking for stale segments. Pending: {len(self.shm_manager.pending_shm)}")
                     cleaned = self.shm_manager.cleanup_stale_segments(worker_alive)
                     if cleaned:
                         with self.stats_lock:
                             self.stats['watchdog_cleanups'] += len(cleaned)
-                        logger.debug(f"Watchdog cleaned {len(cleaned)} stale segments")
+                        logger.info(f"[Watchdog] Cleaned {len(cleaned)} stale segments: {cleaned}")
+                    else:
+                        logger.debug("[Watchdog] No stale segments found")
                 
                 # Log status periodically
                 if self.stats['total_requests'] % 100 == 0 and self.stats['total_requests'] > 0:

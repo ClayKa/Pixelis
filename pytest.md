@@ -1,168 +1,89 @@
-Of course. Here is the detailed, step-by-step implementation plan in English for the P0 and P1 priority tasks.
+### **Action Plan: The Final Cleanup Campaign**
+
+We have achieved a decisive victory, with a 99% pass rate (`198 passed / 200 collected`). We will now neutralize the final two isolated failures to achieve a 100% stable codebase.
 
 ---
 
-### **Action Plan: Final Bug Elimination Campaign**
+#### **Priority 0: Fix the Watchdog Fault-Tolerance Test**
 
-We have achieved stability in our core modules. We will now proceed to eliminate the remaining isolated bugs, starting with the fastest fixes and then focusing on the core RFT algorithm.
+This issue is critical as it pertains to the robustness and fault tolerance of our online system.
 
----
+*   **Symptom**: `AssertionError: assert 0 > 0` in `test_watchdog_cleanup_on_timeout`.
+*   **Diagnosis**: This assertion failure definitively means that the `engine.stats['watchdog_cleanups']` counter was not incremented. Although the watchdog thread is running, it **is not performing the cleanup action as expected**.
+*   **Likely Causes**:
+    1.  **Logical Error**: The logic inside the `_watchdog_loop` is flawed. It might not be iterating through the `pending_shm` dictionary correctly, or the timeout condition `(current_time - timestamp) > timeout` could be incorrectly implemented.
+    2.  **State Update Error**: The cleanup operation might be executing, but the line `self.stats['watchdog_cleanups'] += 1` is either missing, not being called, or is in the wrong location.
+    3.  **Thread Synchronization Issue**: It's possible the main test thread calls `engine.watchdog_thread.join()` before the watchdog thread has had a chance to complete its final loop cycle where the cleanup would occur.
 
-#### **Priority 0: Fix Simple Logic & Assertion Errors**
+*   **Solution (Step-by-Step)**:
 
-These are "low-hanging fruit" and should be fixed first to rapidly decrease the number of failing tests.
+    1.  **Enhance Logging for Debugging**: Open `core/engine/inference_engine.py` and add detailed logging inside the `_watchdog_loop` method to gain visibility into its execution.
 
-##### **Task 1: Fix `AssertionError` in `test_calculate_agreement_factor`**
-
-*   **Symptom**: The test fails because the calculated factor `0.7666...` is not less than the expected `0.7`.
-*   **File**: `tests/modules/test_voting.py`
-*   **Root Cause**: The calculation logic in `_calculate_agreement_factor` is likely more complex than a simple percentage, possibly involving smoothing or weighting. The test assertion is too strict or based on a wrong assumption.
-*   **Solution**:
-    1.  **Open `core/modules/voting.py`**: Carefully review the `_calculate_agreement_factor` method to understand its exact mathematical logic.
-    2.  **Open `tests/modules/test_voting.py`**: Locate the `test_calculate_agreement_factor` test.
-    3.  **Correct the Assertion**: Based on the real logic, adjust the assertion. Instead of a hardcoded value, test the behavior. For example, you can assert that the agreement factor for 'cat' (3/4 votes) is greater than the factor for 'dog' (1/4 votes). If the exact value is important, calculate the correct expected value and use `pytest.approx` for a safe floating-point comparison.
-
-    **Example Implementation:**
-    ```python
-    # In tests/modules/test_voting.py
-
-    def test_calculate_agreement_factor(self):
-        """Test agreement factor calculation."""
-        votes = [ {'answer': 'cat'}, {'answer': 'cat'}, {'answer': 'cat'}, {'answer': 'dog'} ]
-
-        # High agreement (75% for cat)
-        factor_cat = self.voting._calculate_agreement_factor(votes, 'cat')
-        self.assertGreater(factor_cat, 0.7)
-        self.assertLessEqual(factor_cat, 1.0)
-
-        # Low agreement (25% for dog)
-        factor_dog = self.voting._calculate_agreement_factor(votes, 'dog')
-        
-        # --- CORRECTED ASSERTION ---
-        # Assert the relationship between factors and use approx for specific values
-        self.assertGreater(factor_cat, factor_dog)
-        
-        # If the formula is, for example, (count/total) * 0.9 + 0.1, then:
-        # Expected for dog: (1/4) * 0.9 + 0.1 = 0.325
-        # self.assertAlmostEqual(factor_dog, 0.325, places=4) 
-        # OR using pytest:
-        # assert factor_dog == pytest.approx(0.325)
-    ```
-
-##### **Task 2: Fix `AssertionError` in `test_parse_trajectory`**
-
-*   **Symptom**: The parser finds 3 actions, but the test expects 4.
-*   **File**: `tests/test_rft_training.py`
-*   **Root Cause**: The regular expression or parsing logic in the `parse_trajectory` utility function is likely failing to identify an action that has no arguments, such as `GET_PROPERTIES()`.
-*   **Solution**:
-    1.  **Open the file containing the `parse_trajectory` function.**
-    2.  **Enhance the Regular Expression**: Modify the regex that finds actions. It should correctly handle both actions with arguments (e.g., `NAME(key=value)`) and actions without arguments (e.g., `NAME()`). A common mistake is making the parenthesis content `(...)` a required group. Make the inner part optional.
-    
-    **Example Regex Fix:**
-    ```python
-    # A potential regex pattern
-    # Before (might miss empty parentheses):
-    # pattern = re.compile(r"(\w+)\((.+)\)")
-    
-    # After (the `*` makes the content inside parentheses optional):
-    pattern = re.compile(r"(\w+)\((.*)\)") 
-    ```
-    3.  Ensure the parser correctly handles the case where the argument group is empty.
-
-##### **Task 3: Fix `AssertionError` in `test_curriculum_manager`**
-
-*   **Symptom**: `manager.should_attempt_advance()` returns `False` when the test expects `True`.
-*   **File**: `tests/test_sft_curriculum.py`
-*   **Root Cause**: A logical mismatch between the test setup and the conditions inside the `should_attempt_advance` method.
-*   **Solution**:
-    1.  **Open the `CurriculumManager` class** to see its exact logic. Let's assume the logic is something like:
+        **Code Modification Example:**
         ```python
-        # In CurriculumManager
-        def should_attempt_advance(self, global_step):
-            is_time = (global_step - self.steps_since_advance) >= self.advancement_interval
-            is_not_in_cooldown = (global_step - self.steps_since_rollback) > self.rollback_cooldown
-            return is_time and is_not_in_cooldown
+        # In core/engine/inference_engine.py -> _watchdog_loop
+        import logging
+        log = logging.getLogger(__name__)
+
+        def _watchdog_loop(self):
+            while self.watchdog_running:
+                try:
+                    # ...
+                    log.debug(f"[Watchdog] Checking. Pending segments: {len(self.shm_manager.pending_shm)}")
+                    # Use list() to avoid issues with iterating over a dictionary that is being modified
+                    for name, info in list(self.shm_manager.pending_shm.items()):
+                        age = (datetime.now() - info.created_at).total_seconds()
+                        log.debug(f"[Watchdog] Checking segment {name}, age: {age:.2f}s, timeout: {self.config['shm_timeout']}s")
+                        
+                        if age > self.config['shm_timeout']:
+                            log.warning(f"[Watchdog] TIMEOUT DETECTED for {name}. Cleaning up.") #<-- CRITICAL LOG
+                            self.shm_manager.cleanup_segment(name)
+                            self.stats['watchdog_cleanups'] += 1
+                    # ...
+                except Exception as e:
+                    log.exception(f"[Watchdog] Error in watchdog loop: {e}")
+                time.sleep(self.config['watchdog_interval'])
         ```
-    2.  **Open `tests/test_sft_curriculum.py`**: Review the setup for `test_curriculum_manager`. The test sets `manager.steps_since_advance = 60` and calls the check with `global_step=100`. If `advancement_interval` is `50` (as it is in the config), then `100 - 60 = 40`, which is **less than** 50. The logic is working correctly, but the test setup is wrong.
-    3.  **Correct the Test Setup**: Change the setup to create a condition that should logically pass.
-    
-    **Example Implementation Fix:**
-    ```python
-    # In tests/test_sft_curriculum.py
-    
-    def test_curriculum_manager():
-        # ... (config setup) ...
-        manager = CurriculumManager(config)
-        # ... (initial state asserts) ...
-        
-        # --- CORRECTED TEST SETUP ---
-        # To make the condition `(100 - steps_since_advance) >= 50` true,
-        # steps_since_advance must be 50 or less.
-        manager.steps_since_advance = 50 # Or any value <= 50
-        
-        # Now the assertion will pass
-        assert manager.should_attempt_advance(global_step=100) == True
-    ```
+
+    2.  **Rerun and Observe Logs**: Execute the failing test again, but this time with flags to capture and display the log output. The `-s` flag disables output capturing, and `-o log_cli=true` enables live logging to the console.
+
+        ```bash
+        pytest -s -v -o log_cli=true tests/engine/test_async_communication.py -k "test_watchdog_cleanup_on_timeout"
+        ```
+        Carefully examine the output for the **"TIMEOUT DETECTED"** log message.
+
+    3.  **Implement the Fix**:
+        *   **If the "TIMEOUT DETECTED" log does NOT appear**: The condition `if age > self.config['shm_timeout']:` is never evaluating to true. Double-check the timestamp calculation (`datetime.now()`, `info.created_at`) and ensure the data types are correct.
+        *   **If the "TIMEOUT DETECTED" log DOES appear**, but the final assertion still fails: This confirms that the cleanup logic is being triggered, but the counter is not being updated. Ensure the `self.stats['watchdog_cleanups'] += 1` line is correctly placed inside the `if` block and is not accidentally skipped.
 
 ---
 
-#### **Priority 1: Fix RFT Core Algorithm**
+#### **Priority 1: Fix the GRPO Optimizer Test**
 
-##### **Task 4: Fix `RuntimeError: Expected all tensors to be on the same device`**
+This is a functional bug in a specific test for our RL optimizer.
 
-*   **Symptom**: Mixing `cpu` and `cuda:0` tensors in PyTorch operations.
-*   **Files**: `scripts/train_rft.py` (or wherever `EnhancedRewardOrchestrator` and `EnhancedCuriosityModule` are defined).
-*   **Root Cause**: Test-created tensors (like `state_embeddings`) are on the CPU by default, while the model parameters (and thus any outputs) might be on the GPU if a GPU is available.
-*   **Solution**:
-    1.  **Establish a Single Source of Truth for the Device**: The reward modules should know which device to work on. This should be passed during their initialization.
-    2.  **Enforce Device Consistency**: At the beginning of every method that performs tensor operations, ensure all input tensors are moved to the correct device.
+*   **Symptom**: `TypeError: ...mock_compute_advantages() takes 3 positional arguments but 4 were given`.
+*   **Diagnosis**: This is a classic mock signature mismatch. We have replaced a method with a mock function that does not have the same number of arguments as the original method. The original method likely has `self` as its first argument, which our mock is missing.
+*   **Solution (Step-by-Step)**:
 
-    **Example Implementation:**
-    ```python
-    # In the class definition (e.g., EnhancedCuriosityModule)
-    class EnhancedCuriosityModule:
-        def __init__(self, ..., device="cpu"):
-            super().__init__()
-            self.device = torch.device(device)
-            self.dynamics_model = LightweightDynamicsModel(...).to(self.device)
-            # Move all sub-modules to the correct device
+    1.  **Identify the Original Method Signature**: While we could look into the TRL library source code for `GRPOTrainer.compute_advantages`, the error strongly implies the fourth argument is `self`.
+    2.  **Correct the Mock Function Signature**: Open `tests/test_rft_training.py` and locate the `test_group_advantage_normalization` method.
+    3.  **Add the missing `self` argument** to the definition of the `mock_compute_advantages` function.
 
-        def compute_curiosity_reward(self, state_tensor, action_tensor, ...):
-            # --- ENFORCE DEVICE CONSISTENCY AT ENTRY POINT ---
-            state_tensor = state_tensor.to(self.device)
-            action_tensor = action_tensor.to(self.device)
-            # ... and so on for all other tensor inputs ...
+        **Code Modification Example:**
 
-            # Now all subsequent operations are safe
-            # ...
-    ```
-    Apply this pattern systematically to all reward computation methods involved in the failing tests.
+        **Before (Incorrect):**
+        ```python
+        # In tests/test_rft_training.py
+        def mock_compute_advantages(values, rewards, mask):
+            return torch.randn(12)
+        ```
 
-##### **Task 5: Fix `AssertionError: assert 7 <= 5` in `test_caching_mechanism`**
+        **After (Correct):**
+        ```python
+        # In tests/test_rft_training.py
+        def mock_compute_advantages(self, values, rewards, mask): # <-- Add `self` here
+            return torch.randn(12)
+        ```
 
-*   **Symptom**: The LRU cache is growing beyond its configured maximum size.
-*   **File**: `tests/test_rft_training.py`.
-*   **Root Cause**: The cache is likely implemented with a standard Python `dict`, which has no size limit.
-*   **Solution**:
-    1.  **Use the Right Tool**: The simplest way to implement an LRU cache is with `collections.OrderedDict`.
-    2.  **Implement the LRU Logic**: After adding a new item, check if the size exceeds the limit. If it does, remove the oldest item using `popitem(last=False)`.
-
-    **Example Implementation:**
-    ```python
-    # In the EnhancedCuriosityModule class
-    from collections import OrderedDict
-
-    class EnhancedCuriosityModule:
-        def __init__(self, ..., cache_size=128):
-            # ...
-            self.cache = OrderedDict()
-            self.cache_size = cache_size
-
-        def add_to_cache(self, key, value):
-            self.cache[key] = value
-            # Check if cache exceeds size limit
-            if len(self.cache) > self.cache_size:
-                # Remove the oldest item (Last-Recently-Used)
-                self.cache.popitem(last=False)
-    ```
-    Integrate this logic into your caching mechanism.
+---
