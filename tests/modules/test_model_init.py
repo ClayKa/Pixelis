@@ -30,7 +30,6 @@ from core.models.peft_model import (
 # Suppress warnings during testing
 warnings.filterwarnings('ignore')
 
-@pytest.mark.skip(reason="Module core.models not yet implemented")
 class TestDynamicLoRAConfig(unittest.TestCase):
     """Test DynamicLoRAConfig class"""
     
@@ -118,7 +117,6 @@ class TestDynamicLoRAConfig(unittest.TestCase):
             self.assertIn(r".*\.q_proj", rank_pattern)
             self.assertEqual(rank_pattern[r".*\.q_proj"], 16)
 
-@pytest.mark.skip(reason="Module core.models not yet implemented")
 class TestLoRAInsertion(unittest.TestCase):
     """Test correct LoRA layer insertion"""
     
@@ -216,7 +214,6 @@ class TestLoRAInsertion(unittest.TestCase):
         self.assertEqual(ranks["linear2"], 16)
         self.assertNotEqual(ranks["linear1"], ranks["linear2"])
 
-@pytest.mark.skip(reason="Module core.models not yet implemented")
 class TestPerformanceAssertions(unittest.TestCase):
     """Test performance assertions for memory and latency"""
     
@@ -383,7 +380,6 @@ class TestPerformanceAssertions(unittest.TestCase):
             f"Peak memory ({peak_memory_mb:.2f} MB) exceeds threshold"
         )
 
-@pytest.mark.skip(reason="Module core.models not yet implemented")
 class TestSVDArtifactPersistence(unittest.TestCase):
     """Test persistence of SVD analysis artifacts"""
     
