@@ -162,7 +162,10 @@ class TestAsyncCommunication:
     def mock_experience_buffer(self):
         """Create a mock experience buffer."""
         buffer = MagicMock()
-        buffer.search_index.return_value = []
+        # Return some mock neighbors to trigger voting
+        mock_neighbors = [MagicMock(), MagicMock()]  # Two mock neighbors
+        buffer.search_index.return_value = mock_neighbors
+        buffer.__len__ = MagicMock(return_value=150)  # Above default threshold to avoid cold start
         return buffer
     
     @pytest.fixture

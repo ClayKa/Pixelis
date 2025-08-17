@@ -391,8 +391,21 @@ class InferenceEngine:
                     'inference_time': time.time() - start_time
                 })
                 
+                # Construct the result dictionary explicitly
+                if isinstance(initial_prediction, dict):
+                    result_dict = {
+                        "answer": initial_prediction.get('answer', ''),
+                        "trajectory": initial_prediction.get('trajectory', [])
+                    }
+                else:
+                    # Handle case where initial_prediction is not a dict
+                    result_dict = {
+                        "answer": initial_prediction,
+                        "trajectory": []
+                    }
+                
                 return (
-                    initial_prediction.get('answer', initial_prediction) if isinstance(initial_prediction, dict) else initial_prediction,
+                    result_dict,
                     confidence,
                     metadata
                 )
@@ -433,9 +446,23 @@ class InferenceEngine:
             # Fallback if voting failed
             if voting_result is None:
                 from types import SimpleNamespace
+                # Create properly formatted answer dictionary for consistency
+                if isinstance(initial_prediction, dict):
+                    answer_dict = {
+                        "answer": initial_prediction.get('answer', ''),
+                        "trajectory": initial_prediction.get('trajectory', [])
+                    }
+                    confidence = initial_prediction.get('confidence', 0.5)
+                else:
+                    answer_dict = {
+                        "answer": initial_prediction,
+                        "trajectory": []
+                    }
+                    confidence = 0.5
+                
                 voting_result = SimpleNamespace(
-                    final_answer=initial_prediction.get('answer', initial_prediction) if isinstance(initial_prediction, dict) else initial_prediction,
-                    confidence=initial_prediction.get('confidence', 0.5) if isinstance(initial_prediction, dict) else 0.5,
+                    final_answer=answer_dict,
+                    confidence=confidence,
                     provenance={'source': 'direct_model', 'fallback': True}
                 )
             
