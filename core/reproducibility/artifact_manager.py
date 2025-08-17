@@ -673,6 +673,10 @@ class ArtifactManager:
             return tree
         
         return build_tree(artifact_key)
+    
+    def list_artifacts(self) -> List[ArtifactMetadata]:
+        """List all artifacts in the current run."""
+        return list(self.artifact_cache.values())
 
 
 # Global singleton instance
