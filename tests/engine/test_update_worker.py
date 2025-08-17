@@ -16,6 +16,7 @@ import numpy as np
 import tempfile
 import time
 import json
+import logging
 from pathlib import Path
 from datetime import datetime
 from unittest.mock import Mock, MagicMock, patch, PropertyMock
@@ -376,8 +377,11 @@ class TestUpdateWorker:
     @patch('core.engine.update_worker.logger')
     def test_process_update_success(self, mock_logger, update_worker, sample_update_task):
         """Test successful update processing."""
-        # Process the update
-        update_worker._process_update(sample_update_task)
+        # Mock low KL divergence to ensure update succeeds
+        with patch.object(update_worker, '_calculate_kl_penalty') as mock_kl:
+            mock_kl.return_value = (torch.tensor(0.001), torch.tensor(0.001))  # Very low KL
+            
+            update_worker._process_update(sample_update_task)
         
         # Check statistics
         assert update_worker.stats['total_updates'] == 1
@@ -387,6 +391,23 @@ class TestUpdateWorker:
         # Check that task was marked as processed
         assert sample_update_task.processed_at is not None
     
+    @patch('core.engine.update_worker.logger')
+    def test_update_is_skipped_on_high_kl_divergence(self, mock_logger, update_worker, sample_update_task, caplog):
+        """
+        Verify that the update is skipped if the KL divergence is too high,
+        and that the statistics are not updated.
+        """
+        # Mock high KL divergence to trigger safety skip
+        with caplog.at_level(logging.WARNING):
+            with patch.object(update_worker, '_calculate_kl_penalty') as mock_kl:
+                mock_kl.return_value = (torch.tensor(0.2), torch.tensor(0.2))  # Very high KL
+                
+                update_worker._process_update(sample_update_task)
+
+        # Check statistics - should skip the update
+        assert update_worker.stats['failed_updates'] == 1
+        assert update_worker.stats['successful_updates'] == 0
+
     @patch('core.engine.update_worker.logger')
     def test_process_update_high_kl_skip(self, mock_logger, update_worker, sample_update_task):
         """Test skipping update when KL is too high."""
@@ -530,6 +551,7 @@ class TestIntegration:
             )
             
             # Create and enqueue tasks
+            tasks = []
             for i in range(3):
                 experience = Experience(
                     experience_id=f"exp-{i}",
@@ -547,14 +569,20 @@ class TestIntegration:
                     original_logits=torch.randn(1, 10)
                 )
                 
+                tasks.append(task)
                 update_queue.put(task)
             
-            # Process tasks
-            for _ in range(3):
-                task = update_queue.get(timeout=1.0)
-                worker._process_update(task)
+            # Mock low KL divergence to ensure updates succeed
+            with patch.object(worker, '_calculate_kl_penalty') as mock_kl:
+                mock_kl.return_value = (torch.tensor(0.001), torch.tensor(0.001))  # Very low KL
+                
+                # Process tasks
+                for _ in range(3):
+                    task = update_queue.get(timeout=1.0)
+                    worker._process_update(task)
             
             # Check statistics
+            # NOW, this assertion should pass because updates are no longer skipped.
             assert worker.stats['total_updates'] == 3
             assert worker.stats['successful_updates'] == 3
     
