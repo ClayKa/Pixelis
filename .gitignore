@@ -42,7 +42,6 @@ conda-meta/
 *.ckpt
 *.safetensors
 checkpoints/
-# models/
 weights/
 
 # Jupyter Notebook
@@ -122,3 +121,18 @@ htmlcov/
 scratch/
 experiments/
 debug/
+
+
+**/models/*
+**/saved_models/*
+!**/models/
+!**/saved_models/
+!**/models/**/*.py
+!**/saved_models/.gitkeep
+!**/models/**/__init__.py
+
+coverage.xml
+.coverage.*
+.coverage
+.pytest_cache/
+htmlcov/

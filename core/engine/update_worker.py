@@ -772,11 +772,11 @@ class UpdateWorker:
                 'target_kl': self.kl_config.target_kl
             },
             'reward_components': {
-                'task_reward': float(task.reward_tensor[0]) if isinstance(task.reward_tensor, torch.Tensor) and len(task.reward_tensor) > 0 else 0.0,
-                'curiosity_reward': float(task.reward_tensor[1]) if isinstance(task.reward_tensor, torch.Tensor) and len(task.reward_tensor) > 1 else 0.0,
-                'coherence_reward': float(task.reward_tensor[2]) if isinstance(task.reward_tensor, torch.Tensor) and len(task.reward_tensor) > 2 else 0.0,
-                'tool_penalty': float(task.reward_tensor[3]) if isinstance(task.reward_tensor, torch.Tensor) and len(task.reward_tensor) > 3 else 0.0,
-                'total_reward': float(task.reward_tensor[-1]) if isinstance(task.reward_tensor, torch.Tensor) and len(task.reward_tensor) > 0 else 0.0
+                'task_reward': float(task.reward_tensor.item() if task.reward_tensor.numel() == 1 else task.reward_tensor[0]) if isinstance(task.reward_tensor, torch.Tensor) and task.reward_tensor.numel() > 0 else 0.0,
+                'curiosity_reward': float(task.reward_tensor[1]) if isinstance(task.reward_tensor, torch.Tensor) and task.reward_tensor.numel() > 1 else 0.0,
+                'coherence_reward': float(task.reward_tensor[2]) if isinstance(task.reward_tensor, torch.Tensor) and task.reward_tensor.numel() > 2 else 0.0,
+                'tool_penalty': float(task.reward_tensor[3]) if isinstance(task.reward_tensor, torch.Tensor) and task.reward_tensor.numel() > 3 else 0.0,
+                'total_reward': float(task.reward_tensor.item() if task.reward_tensor.numel() == 1 else task.reward_tensor[-1]) if isinstance(task.reward_tensor, torch.Tensor) and task.reward_tensor.numel() > 0 else 0.0
             },
             'duration_seconds': duration,
             'update_number': self.stats['total_updates'],
