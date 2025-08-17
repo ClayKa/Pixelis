@@ -391,8 +391,14 @@ class TestAsyncCommunication:
         voting_result = VotingResult(
             final_answer={'answer': 'test', 'trajectory': []},
             confidence=0.8,
-            votes=[],
-            weights=[]
+            provenance={
+                'votes': [],
+                'weights': [],
+                'model_self_answer': 'test',
+                'retrieved_neighbors_count': 0,
+                'neighbor_answers': [],
+                'voting_strategy': 'weighted'
+            }
         )
         
         initial_prediction = {'logits': torch.randn(10, 100)}

@@ -164,6 +164,7 @@ class Experience:
         priority: Priority score for sampling
         retrieval_count: Number of times retrieved from buffer
         success_count: Number of successful uses in voting
+        metadata: Additional experience metadata
     """
     experience_id: str
     image_features: Union[torch.Tensor, np.ndarray]
@@ -176,6 +177,7 @@ class Experience:
     priority: float = 1.0
     retrieval_count: int = 0
     success_count: int = 0
+    metadata: Dict[str, Any] = field(default_factory=dict)
     
     def __post_init__(self):
         """Validate experience data after initialization."""
@@ -263,7 +265,8 @@ class Experience:
             "status": self.status.value,
             "priority": self.priority,
             "retrieval_count": self.retrieval_count,
-            "success_count": self.success_count
+            "success_count": self.success_count,
+            "metadata": self.metadata
         }
     
     @classmethod
@@ -281,7 +284,8 @@ class Experience:
             embeddings=None,  # Must be loaded separately
             priority=data.get("priority", 1.0),
             retrieval_count=data.get("retrieval_count", 0),
-            success_count=data.get("success_count", 0)
+            success_count=data.get("success_count", 0),
+            metadata=data.get("metadata", {})
         )
     
     def get_input_ids(self) -> torch.Tensor:
