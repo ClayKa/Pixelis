@@ -13,6 +13,7 @@ import numpy as np
 import tempfile
 from typing import Dict, Any, Tuple
 import sys
+from queue import Empty
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -84,6 +85,15 @@ def error_worker(queue):
         raise ValueError("Test error")
     except Exception as e:
         queue.put({"error": str(e)})
+
+
+def create_and_clean_worker(manager, num_ops):
+    """Worker for concurrent access test - creates and cleans segments."""
+    for _ in range(num_ops):
+        tensor = torch.randn(10, 10)
+        info = manager.create_shared_tensor(tensor)
+        time.sleep(0.01)  # Small delay
+        manager.mark_cleaned(info.name)
 
 
 class TestSharedMemoryTransfer:
@@ -214,7 +224,7 @@ class TestQueueCommunication:
         queue = mp.Queue()
         
         # Try to get from empty queue
-        with pytest.raises(mp.queues.Empty):
+        with pytest.raises(Empty):
             queue.get(timeout=0.1)
         
         # Put with timeout should work
@@ -380,9 +390,9 @@ class TestCleanupMechanisms:
         for info in shm_infos:
             cleanup_queue.put(info.name)
         
-        # Process confirmations
-        while not cleanup_queue.empty():
-            shm_name = cleanup_queue.get()
+        # Process confirmations (don't rely on empty() - it's unreliable)
+        for _ in range(len(shm_infos)):
+            shm_name = cleanup_queue.get(timeout=1.0)
             manager.mark_cleaned(shm_name)
         
         # All segments should be cleaned
@@ -472,29 +482,29 @@ class TestEdgeCases:
         manager.mark_cleaned(shm_info.name)
     
     def test_concurrent_access(self):
-        """Test concurrent access to shared memory manager."""
+        """Test concurrent access to shared memory manager using threads."""
+        import threading
+        
         manager = SharedMemoryManager()
         
-        def create_and_clean(manager, num_ops):
-            """Create and clean segments."""
+        def thread_worker(manager, num_ops):
+            """Thread worker for concurrent access."""
             for _ in range(num_ops):
                 tensor = torch.randn(10, 10)
                 info = manager.create_shared_tensor(tensor)
                 time.sleep(0.01)  # Small delay
                 manager.mark_cleaned(info.name)
         
-        # Create multiple processes
-        processes = []
+        # Create multiple threads (not processes - manager can't be pickled)
+        threads = []
         for _ in range(3):
-            p = mp.Process(target=create_and_clean, args=(manager, 5))
-            p.start()
-            processes.append(p)
+            t = threading.Thread(target=thread_worker, args=(manager, 5))
+            t.start()
+            threads.append(t)
         
         # Wait for all to finish
-        for p in processes:
-            p.join(timeout=10.0)
-            if p.is_alive():
-                p.terminate()
+        for t in threads:
+            t.join(timeout=10.0)
         
         # Should have no pending segments
         assert len(manager.pending_shm) == 0
