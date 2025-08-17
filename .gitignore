@@ -42,7 +42,7 @@ conda-meta/
 *.ckpt
 *.safetensors
 checkpoints/
-models/
+# models/
 weights/
 
 # Jupyter Notebook
