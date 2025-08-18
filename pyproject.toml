@@ -141,7 +141,7 @@ addopts = [
     "--cov-report=term-missing",
     "--cov-report=html",
     "--cov-report=xml",
-    "--cov-fail-under=70",  # Minimum 70% coverage for core modules
+    "--cov-fail-under=75",  # Minimum 75% coverage for core modules
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",

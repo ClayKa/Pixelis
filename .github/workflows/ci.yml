@@ -108,7 +108,7 @@ jobs:
           coverage report
           
           # Check coverage threshold
-          coverage report --fail-under=70 || echo "Coverage below 70% threshold"
+          coverage report --fail-under=75 || echo "Coverage below 75% threshold"
 
       - name: Upload Coverage Reports
         uses: actions/upload-artifact@v4

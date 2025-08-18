@@ -8,7 +8,7 @@ Excellent. We have achieved a stable baseline with 100% test pass rate. Now, we 
 
 #### **Objective**
 
-To systematically increase the total test coverage from **42.25%** to our mandated target of **>70%** by writing new, targeted unit tests.
+To systematically increase the total test coverage from **42.25%** to our mandated target of **>75%** by writing new, targeted unit tests.
 
 #### **Guiding Strategy**
 
@@ -75,7 +75,7 @@ This is the core execution phase. We will go through the prioritized files one b
     1.  Save your changes.
     2.  Run the tests with the coverage command: `pytest --cov=core`.
     3.  Observe the results. The total coverage percentage should have increased, and the specific file you worked on should now show a higher coverage number.
-*   **Action**: Repeat this cycle: **Analyze -> Prioritize -> Write Tests -> Verify**. Continue this process, moving from one critical module to the next, until the total coverage score surpasses our goal of 70%.
+*   **Action**: Repeat this cycle: **Analyze -> Prioritize -> Write Tests -> Verify**. Continue this process, moving from one critical module to the next, until the total coverage score surpasses our goal of 75%.
 
 ---
 ### **Final Instructions (As the Lead)**
@@ -89,4 +89,4 @@ This is the core execution phase. We will go through the prioritized files one b
 3.  **Start the "Coloring Game"**: Find the red lines. Write new tests that execute them. Turn the red lines green.
 4.  **Report your progress regularly**: I don't need it all done at once, but I expect to see a steady, daily increase in the coverage percentage.
 
-"Our target is **70%**. This is a non-negotiable quality gate for our project. It ensures we are delivering a high-quality, trustworthy piece of software. Begin the operation."
+"Our target is **75%**. This is a non-negotiable quality gate for our project. It ensures we are delivering a high-quality, trustworthy piece of software. Begin the operation."
