@@ -135,3 +135,4 @@ coverage.xml
 .coverage
 .pytest_cache/
 htmlcov/
+.claude/agents

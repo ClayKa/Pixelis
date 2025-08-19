@@ -19,6 +19,7 @@ import signal
 from datetime import datetime, timedelta
 import threading
 import numpy as np
+import queue  # Ensure 'queue' is imported for proper exception handling
 
 logger = logging.getLogger(__name__)
 
@@ -291,6 +292,11 @@ class InferenceEngine:
         self.hil_mode_enabled = config.get('hil_mode_enabled', False)
         self.hil_review_percentage = config.get('hil_review_percentage', 0.02)  # 2% by default
         self.hil_review_counter = 0
+        
+        # Main loop control
+        self.is_running = True
+        self.test_mode_iterations = config.get('test_mode_iterations', None)  # For testing only
+        self._iteration_count = 0
         
         # Watchdog settings
         self.watchdog_interval = config.get('watchdog_interval', 5.0)
@@ -978,26 +984,32 @@ class InferenceEngine:
     
     def _process_cleanup_confirmations(self):
         """
-        Process cleanup confirmations from the update worker.
+        Safely process all available cleanup confirmations from the worker.
         """
         from queue import Empty
         processed_count = 0
-        while True:
+        while not self.cleanup_confirmation_queue.empty():
             try:
-                # Non-blocking get from cleanup queue
+                # The get() call is now inside a try...except block.
                 shm_name = self.cleanup_confirmation_queue.get_nowait()
-                self.shm_manager.mark_cleaned(shm_name)
-                logger.debug(f"Received cleanup confirmation for {shm_name}")
+                
+                if shm_name in self.shm_manager.pending_shm:
+                    logger.debug(f"[Watchdog] Received cleanup confirmation for: {shm_name}")
+                    self.shm_manager.mark_cleaned(shm_name)
+                
                 processed_count += 1
             except Empty:
-                # Queue is empty - expected condition
-                logger.debug(f"Processed {processed_count} cleanup confirmations, queue now empty")
+                # Queue is empty - expected condition when race conditions occur
+                logger.debug(f"Processed {processed_count} cleanup confirmations, queue empty")
                 break
             except Exception as e:
-                logger.error(f"Unexpected error processing cleanup confirmation: {e.__class__.__name__}: {e}")
-                import traceback
-                logger.error(f"Traceback: {traceback.format_exc()}")
-                break
+                # If any error occurs (e.g., queue is empty due to a race condition),
+                # log it and continue to the next potential item.
+                logger.error(f"[Watchdog] Error processing cleanup confirmation: {e}", exc_info=True)
+                continue
+        
+        if processed_count > 0:
+            logger.debug(f"Processed {processed_count} cleanup confirmations total")
     
     def _log_status(self):
         """
@@ -1024,12 +1036,14 @@ class InferenceEngine:
         # Start the update worker
         self.start_update_worker()
         
-        while True:
+        while self.is_running:
             try:
-                # Get request from queue (blocking with timeout)
-                request = self.request_queue.get(timeout=1.0)
+                # 1. Use a non-blocking get() with a timeout.
+                #    This value should ideally be loaded from config.
+                timeout_seconds = getattr(self.config, 'queue_timeout', 1.0) if hasattr(self, 'config') else 1.0
+                request = self.request_queue.get(timeout=timeout_seconds)
                 
-                if request is None:  # Shutdown signal
+                if request is None:  # Sentinel value to stop the loop
                     break
                 
                 with self.stats_lock:
@@ -1038,9 +1052,22 @@ class InferenceEngine:
                 # Process the request
                 asyncio.run(self._process_request(request))
                 
+            except queue.Empty:
+                # 2. This is the expected, normal behavior when no requests are available.
+                #    It is not an error. We simply continue to the next loop iteration.
+                #    This allows the loop to remain responsive and not hang.
+                logger.debug("No new requests in queue, continuing main loop.")
+                
+                # Test mode: stop after specified iterations
+                if self.test_mode_iterations is not None:
+                    self._iteration_count += 1
+                    if self._iteration_count >= self.test_mode_iterations:
+                        logger.info(f"Test mode: stopping after {self._iteration_count} iterations")
+                        break
+                
+                continue
             except Exception as e:
-                if "Empty" not in str(e):  # Ignore empty queue timeouts
-                    logger.error(f"Error processing request: {e}")
+                logger.error(f"Error processing request: {e}")
         
         logger.info("Inference Engine main loop stopped")
     
@@ -1083,6 +1110,15 @@ class InferenceEngine:
         Gracefully shutdown the inference engine.
         """
         logger.info("Shutting down Inference Engine")
+        
+        # Stop main loop
+        self.is_running = False
+        
+        # Send shutdown signal to main loop queue
+        try:
+            self.request_queue.put(None, timeout=1.0)
+        except:
+            pass  # Queue might be full
         
         # Stop watchdog
         self.watchdog_running = False
@@ -1496,13 +1532,13 @@ class InferenceEngine:
     
     def _monitoring_loop(self):
         """
-        Main monitoring loop that tracks health indicators and sends alerts.
+        Periodically gathers system and application health metrics.
         """
         import psutil
         
         while self.monitoring_running:
             try:
-                # Collect health metrics
+                # All metric gathering is now inside a try...except block.
                 metrics = {}
                 
                 # Calculate update rate (updates per minute)
@@ -1527,7 +1563,10 @@ class InferenceEngine:
                 if update_queue_size > 0:
                     metrics['queue_size'] = update_queue_size
                 
-                # Get memory usage
+                # Get memory usage - with robust error handling
+                mem_info = psutil.virtual_memory()
+                metrics['cpu_memory_usage'] = mem_info.percent
+                
                 try:
                     process = psutil.Process()
                     memory_info = process.memory_info()
@@ -1535,7 +1574,7 @@ class InferenceEngine:
                     metrics['memory_usage_ratio'] = memory_percent / 100.0
                     metrics['memory_rss_mb'] = memory_info.rss / (1024 * 1024)
                 except Exception as e:
-                    logger.debug(f"Could not get memory info: {e}")
+                    logger.debug(f"Could not get process memory info: {e}")
                 
                 # Get mean KL divergence from worker if available
                 if hasattr(self, 'update_worker_process') and self.update_worker_process:
@@ -1571,10 +1610,12 @@ class InferenceEngine:
                 self._check_critical_conditions(metrics)
                 
             except Exception as e:
-                logger.error(f"Error in monitoring loop: {e}", exc_info=True)
+                # If any error occurs, log it but DO NOT crash the loop.
+                # The monitoring thread will continue to run.
+                logger.error(f"[Monitor] Failed to gather system stats: {e}", exc_info=True)
             
             # Sleep before next iteration
-            time.sleep(self.monitoring_interval)
+            time.sleep(getattr(self, 'monitoring_interval', 5.0))
     
     def _check_critical_conditions(self, metrics: Dict[str, Any]):
         """
