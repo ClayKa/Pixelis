@@ -419,7 +419,8 @@ def create_model_with_dynamic_lora(
         config = DynamicLoRAConfig(
             target_modules=["q_proj", "v_proj", "k_proj", "o_proj"],
             rank_config={"default": 8},
-            base_model_name=model_name
+            base_model_name=model_name,
+            svd_metadata={}
         )
     
     # Create model
