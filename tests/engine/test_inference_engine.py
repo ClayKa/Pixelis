@@ -1129,13 +1129,25 @@ class TestMissingCoverage(unittest.TestCase):
         # Add a segment to cache then mock deletion to fail
         shm_name = "test_error_segment"
         mock_storage = MagicMock()
-        self.engine.shm_manager._shared_memory_cache[shm_name] = mock_storage
         
-        # Mock the __delitem__ to raise an exception (lines 203-204)
-        with patch.dict(self.engine.shm_manager._shared_memory_cache, {shm_name: mock_storage}):
-            with patch('builtins.delitem', side_effect=Exception("Deletion failed")):
-                # This should trigger the exception handling on lines 203-204
-                self.engine.shm_manager._unlink_segment(shm_name)
+        # Create a mock dictionary that raises an exception on __delitem__
+        class MockDict(dict):
+            def __delitem__(self, key):
+                if key == shm_name:
+                    raise Exception("Simulated deletion failure")
+                super().__delitem__(key)
+        
+        # Replace the cache with our mock dictionary
+        mock_cache = MockDict()
+        mock_cache[shm_name] = mock_storage
+        self.engine.shm_manager._shared_memory_cache = mock_cache
+        
+        with self.assertLogs(level='ERROR') as log:
+            # This call will internally try `del cache_dict[shm_name]`, triggering our exception.
+            self.engine.shm_manager._unlink_segment(shm_name)
+            
+            # Verify that the error was caught and logged.
+            self.assertIn("Error unlinking segment", log.output[0])
     
     def test_infer_and_adapt_non_dict_initial_prediction_cold_start(self):
         """Test line 403: handle non-dict initial_prediction in cold start."""
@@ -1266,24 +1278,33 @@ class TestMissingCoverage(unittest.TestCase):
         self.engine.shutdown()
     
     def test_monitoring_loop_memory_info_error(self):
-        """Test line 1538: error handling in memory info collection."""
-        # Mock psutil.Process to raise exception during memory_info() (line 1538)
-        with patch('core.engine.inference_engine.psutil.Process') as mock_process_class:
-            mock_process = MagicMock()
-            mock_process.memory_info.side_effect = Exception("Memory info error")
-            mock_process_class.return_value = mock_process
-            
-            # This should trigger the exception handling on line 1538
-            metrics = {}
-            self.engine.monitoring_running = True
-            
-            # Call the method that uses psutil (simulate one iteration)
-            try:
-                import psutil
-                process = psutil.Process()
-                memory_info = process.memory_info()
-            except:
-                pass  # Expected to fail
+        """Test error handling in memory info collection."""
+        # Since psutil is imported inside the method, we need to mock it at the sys.modules level
+        import sys
+        from unittest.mock import MagicMock
+        
+        # Create a mock psutil module
+        mock_psutil = MagicMock()
+        mock_process_instance = MagicMock()
+        mock_process_instance.memory_info.side_effect = Exception("Simulated psutil error")
+        mock_psutil.Process.return_value = mock_process_instance
+        mock_psutil.virtual_memory.return_value = MagicMock(percent=50.0)
+        
+        # Temporarily replace psutil in sys.modules
+        original_psutil = sys.modules.get('psutil', None)
+        sys.modules['psutil'] = mock_psutil
+        
+        try:
+            # Now, call the code that uses psutil
+            with self.assertLogs(level='ERROR') as log:
+                self.engine._monitoring_loop_iteration()  # Using the refactored testable method
+                self.assertIn("Failed to gather system stats", log.output[0])
+        finally:
+            # Restore original psutil if it existed
+            if original_psutil is not None:
+                sys.modules['psutil'] = original_psutil
+            else:
+                sys.modules.pop('psutil', None)
     
     def test_monitoring_loop_wandb_error_handling(self):
         """Test lines 1567-1568: handle wandb import error in monitoring."""
@@ -1431,7 +1452,9 @@ class TestMissingCoverage(unittest.TestCase):
     
     def test_process_cleanup_confirmations_unexpected_error(self):
         """Test lines 996-1000: handle unexpected error in cleanup confirmation processing."""
-        # Mock get_nowait to raise an unexpected exception (not Empty)
+        # Mock the queue to appear non-empty first, then empty after the error
+        # This prevents an infinite loop
+        self.engine.cleanup_confirmation_queue.empty = MagicMock(side_effect=[False, True])
         self.engine.cleanup_confirmation_queue.get_nowait = MagicMock(
             side_effect=RuntimeError("Unexpected queue error")
         )
@@ -1491,22 +1514,24 @@ class TestMissingCoverage(unittest.TestCase):
             error_msg = mock_logger.error.call_args[0][0]
             self.assertIn("Monitoring thread failed to shut down gracefully", error_msg)
     
-    def test_run_main_loop_empty_queue_timeout(self):
-        """Test line 1042: handle empty queue timeout in main loop."""
-        # Mock queue to raise Empty exception (queue timeout)
+    def test_main_loop_iteration_handles_empty_queue_gracefully(self):
+        """
+        Verifies that a single iteration of the main loop handles a queue.Empty
+        exception gracefully without crashing or raising an unhandled error.
+        """
         from queue import Empty
-        self.engine.request_queue.get = MagicMock(side_effect=Empty("Queue timeout"))
         
-        # Mock start_update_worker to avoid actual process creation
-        self.engine.start_update_worker = MagicMock()
+        # 1. Mock the queue to always raise the Empty exception on get()
+        self.engine.request_queue.get = MagicMock(side_effect=Empty)
         
-        # Run one iteration of the main loop
-        with patch('core.engine.inference_engine.logger') as mock_logger:
-            try:
-                # This should handle the Empty exception gracefully (line 1042)
-                self.engine.run()
-            except:
-                pass  # Expected to break out of while loop
+        try:
+            # 2. Call the single, non-looping iteration method
+            self.engine._main_loop_iteration()
+            # 3. If the code reaches here, it means the exception was caught
+            #    and handled as expected. The test implicitly passes.
+        except Exception as e:
+            # 4. If any *other* exception was raised, the test must fail.
+            pytest.fail(f"The main loop iteration failed unexpectedly with: {e}")
     
     def test_start_update_worker_already_running(self):
         """Test lines 751-753: start_update_worker when already running."""

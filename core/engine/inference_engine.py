@@ -1019,7 +1019,7 @@ class InferenceEngine:
             except Exception as e:
                 # If any error occurs (e.g., queue is empty due to a race condition),
                 # log it and continue to the next potential item.
-                logger.error(f"[Watchdog] Error processing cleanup confirmation: {e}", exc_info=True)
+                logger.error(f"[Watchdog] Unexpected error processing cleanup confirmation: {e}", exc_info=True)
                 continue
         
         if processed_count > 0:
@@ -1040,6 +1040,44 @@ class InferenceEngine:
             f"SHM bytes: {shm_status['total_bytes']}"
         )
     
+    def _main_loop_iteration(self):
+        """
+        Performs a single, non-blocking iteration of the main event loop.
+        This method is extracted from the main run() loop to make it testable.
+        """
+        try:
+            # Use a non-blocking get() with a timeout.
+            timeout_seconds = getattr(self.config, 'queue_timeout', 1.0) if hasattr(self, 'config') else 1.0
+            request = self.request_queue.get(timeout=timeout_seconds)
+            
+            if request is None:  # Sentinel value to stop the loop
+                self.is_running = False  # Signal to stop the loop
+                return
+            
+            with self.stats_lock:
+                self.stats['total_requests'] += 1
+            
+            # Process the request
+            asyncio.run(self._process_request(request))
+            
+        except queue.Empty:
+            # This is the expected, normal behavior when no requests are available.
+            # It is not an error. We simply continue to the next loop iteration.
+            logger.debug("No new requests in queue, continuing main loop.")
+            
+            # Test mode: stop after specified iterations
+            if self.test_mode_iterations is not None:
+                self._iteration_count += 1
+                if self._iteration_count >= self.test_mode_iterations:
+                    logger.info(f"Test mode: stopping after {self._iteration_count} iterations")
+                    self.is_running = False
+            
+            # This is not an error, just return to allow the next loop
+            return
+        except Exception as e:
+            logger.error(f"Critical error in main loop: {e}", exc_info=True)
+            self.is_running = False  # Stop on critical errors
+
     def run(self):
         """
         Main run loop for the inference engine.
@@ -1050,38 +1088,9 @@ class InferenceEngine:
         # Start the update worker
         self.start_update_worker()
         
+        self.is_running = True
         while self.is_running:
-            try:
-                # 1. Use a non-blocking get() with a timeout.
-                #    This value should ideally be loaded from config.
-                timeout_seconds = getattr(self.config, 'queue_timeout', 1.0) if hasattr(self, 'config') else 1.0
-                request = self.request_queue.get(timeout=timeout_seconds)
-                
-                if request is None:  # Sentinel value to stop the loop
-                    break
-                
-                with self.stats_lock:
-                    self.stats['total_requests'] += 1
-                
-                # Process the request
-                asyncio.run(self._process_request(request))
-                
-            except queue.Empty:
-                # 2. This is the expected, normal behavior when no requests are available.
-                #    It is not an error. We simply continue to the next loop iteration.
-                #    This allows the loop to remain responsive and not hang.
-                logger.debug("No new requests in queue, continuing main loop.")
-                
-                # Test mode: stop after specified iterations
-                if self.test_mode_iterations is not None:
-                    self._iteration_count += 1
-                    if self._iteration_count >= self.test_mode_iterations:
-                        logger.info(f"Test mode: stopping after {self._iteration_count} iterations")
-                        break
-                
-                continue
-            except Exception as e:
-                logger.error(f"Error processing request: {e}")
+            self._main_loop_iteration()
         
         logger.info("Inference Engine main loop stopped")
     
@@ -1544,51 +1553,64 @@ class InferenceEngine:
         self.monitoring_thread.start()
         logger.info("Started monitoring thread")
     
+    def _monitoring_loop_iteration(self):
+        """
+        Performs a single iteration of monitoring metrics collection.
+        This method is extracted from _monitoring_loop to make it testable.
+        """
+        import psutil
+        
+        try:
+            # All metric gathering is now inside a try...except block.
+            metrics = {}
+            
+            # Calculate update rate (updates per minute)
+            with self.stats_lock:
+                # Track update rate - simplified for now
+                # In production, would track time-based rate
+                metrics['update_rate'] = self.stats.get('update_rate', 0.0)
+                
+                # Calculate FAISS failure rate
+                total_faiss = self.stats.get('faiss_attempts', 0)
+                if total_faiss > 0:
+                    metrics['faiss_failure_rate'] = self.stats.get('faiss_failures', 0) / total_faiss
+                else:
+                    metrics['faiss_failure_rate'] = 0.0
+            
+            # Get queue sizes
+            queue_sizes = self._get_queue_sizes()
+            metrics['queue_sizes'] = queue_sizes
+            
+            # Check for growing queues
+            update_queue_size = queue_sizes.get('update_queue', 0)
+            if update_queue_size > 0:
+                metrics['queue_size'] = update_queue_size
+            
+            # Get memory usage - with robust error handling
+            mem_info = psutil.virtual_memory()
+            metrics['cpu_memory_usage'] = mem_info.percent
+            
+            try:
+                process = psutil.Process()
+                memory_info = process.memory_info()
+                memory_percent = process.memory_percent()
+                metrics['memory_usage_ratio'] = memory_percent / 100.0
+                metrics['memory_rss_mb'] = memory_info.rss / (1024 * 1024)
+            except Exception as e:
+                logger.error(f"Failed to gather system stats: {e}")
+            
+            return metrics
+        except Exception as e:
+            logger.error(f"Failed to gather monitoring metrics: {e}")
+            return {}
+    
     def _monitoring_loop(self):
         """
         Periodically gathers system and application health metrics.
         """
-        import psutil
-        
         while self.monitoring_running:
             try:
-                # All metric gathering is now inside a try...except block.
-                metrics = {}
-                
-                # Calculate update rate (updates per minute)
-                with self.stats_lock:
-                    # Track update rate - simplified for now
-                    # In production, would track time-based rate
-                    metrics['update_rate'] = self.stats.get('update_rate', 0.0)
-                    
-                    # Calculate FAISS failure rate
-                    total_faiss = self.stats.get('faiss_attempts', 0)
-                    if total_faiss > 0:
-                        metrics['faiss_failure_rate'] = self.stats.get('faiss_failures', 0) / total_faiss
-                    else:
-                        metrics['faiss_failure_rate'] = 0.0
-                
-                # Get queue sizes
-                queue_sizes = self._get_queue_sizes()
-                metrics['queue_sizes'] = queue_sizes
-                
-                # Check for growing queues
-                update_queue_size = queue_sizes.get('update_queue', 0)
-                if update_queue_size > 0:
-                    metrics['queue_size'] = update_queue_size
-                
-                # Get memory usage - with robust error handling
-                mem_info = psutil.virtual_memory()
-                metrics['cpu_memory_usage'] = mem_info.percent
-                
-                try:
-                    process = psutil.Process()
-                    memory_info = process.memory_info()
-                    memory_percent = process.memory_percent()
-                    metrics['memory_usage_ratio'] = memory_percent / 100.0
-                    metrics['memory_rss_mb'] = memory_info.rss / (1024 * 1024)
-                except Exception as e:
-                    logger.debug(f"Could not get process memory info: {e}")
+                metrics = self._monitoring_loop_iteration()
                 
                 # Get mean KL divergence from worker if available
                 if hasattr(self, 'update_worker_process') and self.update_worker_process:
