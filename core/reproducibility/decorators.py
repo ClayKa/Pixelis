@@ -10,7 +10,16 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union
 
+# FIX: Add missing torch import for checkpoint decorator
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    torch = None
+    TORCH_AVAILABLE = False
+
 from .artifact_manager import ArtifactManager, ArtifactType
+from .config_capture import EnvironmentCaptureLevel  # FIX: Move import to top level
 from .experiment_context import ExperimentContext
 from ..utils.logging_utils import get_logger
 
@@ -245,7 +254,7 @@ def reproducible(
             exp_name = name or f"{func.__name__}_{int(time.time())}"
             
             # Create experiment context
-            from .config_capture import EnvironmentCaptureLevel
+            # Import already at top of file
             capture_enum = EnvironmentCaptureLevel(capture_level)
             
             with ExperimentContext(
@@ -373,7 +382,8 @@ def checkpoint(
                 checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
                 
                 try:
-                    import torch
+                    if not TORCH_AVAILABLE:
+                        raise ImportError("PyTorch not available for checkpoint saving")
                     torch.save(model.state_dict(), checkpoint_path)
                     
                     # Log checkpoint artifact
@@ -406,7 +416,8 @@ def checkpoint(
                         best_path = Path(f"checkpoints/{func.__name__}_best.pt")
                         
                         try:
-                            import torch
+                            if not TORCH_AVAILABLE:
+                                raise ImportError("PyTorch not available for checkpoint saving")
                             torch.save(model.state_dict(), best_path)
                             
                             # Log best checkpoint artifact
@@ -502,8 +513,7 @@ def _serialize_arg(arg: Any, max_depth: int = 3, current_depth: int = 0) -> Any:
         pass
     
     # Handle torch tensors
-    try:
-        import torch
+    if TORCH_AVAILABLE and torch is not None:
         if isinstance(arg, torch.Tensor):
             return {
                 "type": "torch.Tensor",
@@ -511,8 +521,6 @@ def _serialize_arg(arg: Any, max_depth: int = 3, current_depth: int = 0) -> Any:
                 "dtype": str(arg.dtype),
                 "device": str(arg.device),
             }
-    except ImportError:
-        pass
     
     # Handle objects with __dict__
     if hasattr(arg, "__dict__") and not inspect.isclass(arg):

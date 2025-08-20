@@ -1,0 +1,128 @@
+# ====================================================================
+# Data Generation Manifest for the Pixelis Project
+# ====================================================================
+# This file is the single source of truth for all data synthesis.
+# It defines WHAT data sources to use and HOW to use them to generate
+# the final training datasets.
+# ====================================================================
+
+# ----------------------------------------------------
+# Section 1: Datasource Registry
+# ----------------------------------------------------
+# Description: Register all approved, raw datasets here. The `type` key helps
+# the generator scripts understand how to parse the annotations.
+#
+# ACTION: You MUST modify the `path` and `annotation_file` for each
+#         entry to point to the correct location on your local machine or server.
+# ----------------------------------------------------
+datasources:
+  coco_train:
+    path: "/path/to/your/coco/train2017" # <-- CHANGEME
+    annotation_file: "/path/to/your/coco/annotations/instances_train2017.json" # <-- CHANGEME
+    type: "ObjectSegmentation"
+
+  part_imagenet_subset:
+    path: "/path/to/your/part_imagenet_subset" # <-- CHANGEME
+    type: "PartSegmentation"
+
+  infographics_vqa:
+    path: "/path/to/your/infographics_vqa" # <-- CHANGEME
+    type: "OCR"
+
+  mot17:
+    path: "/path/to/your/mot17" # <-- CHANGEME
+    type: "ObjectTracking"
+
+  sa1b_subset:
+    path: "/path/to/your/sa1b_subset" # <-- CHANGEME
+    type: "HighResolutionImage"
+
+  starqa_subset:
+    path: "/path/to/your/starqa_subset" # <-- CHANGEME
+    type: "AnnotatedVideo"
+
+# ----------------------------------------------------
+# Section 2: Task Generation Recipes
+# ----------------------------------------------------
+# Description: Defines the "recipes" for generating specialized datasets.
+# Each recipe specifies the generator, the target sample count, and the
+# raw data sources to use.
+#
+# ACTION: You can modify the `target_sample_count` for each task
+#         to control the size of the generated datasets. The initial
+#         values are based on our expert recommendations.
+# ----------------------------------------------------
+tasks:
+  # --- For Pixel-Reasoner Baseline Replication ---
+  zoom_in_replication:
+    enabled: true
+    task_generator_class: "ZoomInTaskGenerator"
+    target_sample_count: 5000 # <-- CHANGEME (optional, expert recommendation)
+    source_datasets:
+      - sa1b_subset
+
+  select_frame_replication:
+    enabled: true
+    task_generator_class: "SelectFrameTaskGenerator"
+    target_sample_count: 5000 # <-- CHANGEME (optional, expert recommendation)
+    source_datasets:
+      - starqa_subset
+
+  # --- For Pixelis's New Capabilities ---
+  geometric_comparison:
+    enabled: true
+    task_generator_class: "GeometricComparisonTaskGenerator"
+    target_sample_count: 15000 # <-- CHANGEME (optional, expert recommendation)
+    source_datasets:
+      - name: coco_train
+        weight: 0.7 # 70% of samples will originate from COCO
+      - name: part_imagenet_subset
+        weight: 0.3 # 30% from PartImageNet
+
+  targeted_ocr:
+    enabled: true
+    task_generator_class: "TargetedOCRTaskGenerator"
+    target_sample_count: 10000 # <-- CHANGEME (optional, expert recommendation)
+    source_datasets:
+      - infographics_vqa
+
+  spatio_temporal_analysis:
+    enabled: true
+    task_generator_class: "SpatioTemporalTaskGenerator"
+    target_sample_count: 10000 # <-- CHANGEME (optional, expert recommendation)
+    source_datasets:
+      - mot17
+
+# ----------------------------------------------------
+# Section 3: Trajectory Augmentation & Composition
+# ----------------------------------------------------
+# Description: Defines the strategies for enriching the generated data
+# with advanced samples like self-correction and trap trajectories.
+# These proportions are applied AFTER the initial generation.
+#
+# ACTION: You can modify the `proportions` to experiment with
+#         different data compositions. The sum should ideally be 1.0.
+# ----------------------------------------------------
+trajectory_augmentation:
+  # Proportions applied to the TOTAL pool of generated "golden" trajectories
+  # from the tasks above.
+  proportions:
+    golden_positive: 0.6  # 60% will remain as standard correct trajectories
+    trap_samples: 0.2     # 20% will be converted to process-negative "trap" samples
+    self_correction: 0.2  # 20% will be augmented into self-correction traces
+
+# ----------------------------------------------------
+# Section 4: Global Output & API Configuration
+# ----------------------------------------------------
+# Description: Global settings for the generation script.
+#
+# ACTION: You MUST modify `output_dir` and the `api_config` section.
+# ----------------------------------------------------
+global_config:
+  # The directory where the specialized .jsonl files will be saved.
+  output_dir: "data_outputs/specialized/" # <-- CHANGEME (optional, good default)
+
+  api_config:
+    model: "gpt-4o-2024-05-13" # The model used for generating text portions of traces
+    api_key_env_variable: "OPENAI_API_KEY" # Name of the environment variable for the API key
+    # You might add other parameters here like rate_limit_per_minute, etc.

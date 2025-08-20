@@ -1,0 +1,171 @@
+# ====================================================================
+# Data Fusion Manifest for Pixelis Training
+# ====================================================================
+# This manifest controls the composition of the final training datasets,
+# ensuring precise control over trajectory types and data proportions.
+# ====================================================================
+
+# ----------------------------------------------------
+# SFT Dataset Recipe
+# ----------------------------------------------------
+# Controls the composition for Supervised Fine-Tuning
+sft_dataset_recipe:
+  target_total_samples: 60000
+  
+  # Task-specific proportions (what types of visual tasks)
+  task_proportions:
+    geometric_comparison: 0.25      # 25% - Spatial reasoning tasks
+    targeted_ocr: 0.20              # 20% - Text reading tasks
+    spatio_temporal_analysis: 0.20 # 20% - Video/tracking tasks
+    zoom_in_replication: 0.10       # 10% - Pixel-Reasoner baseline
+    select_frame_replication: 0.10 # 10% - Pixel-Reasoner baseline
+    general_vqa: 0.15               # 15% - General visual QA
+  
+  # Trajectory composition (how the model should behave)
+  trajectory_composition:
+    golden_positive: 0.60  # 60% - Standard correct trajectories
+    trap_samples: 0.20     # 20% - Process-negative samples (designed to fail)
+    self_correction: 0.20  # 20% - Explicitly demonstrate error recovery
+  
+  # Data quality filters
+  quality_filters:
+    min_trajectory_length: 2       # Minimum number of actions
+    max_trajectory_length: 15      # Maximum number of actions
+    require_visual_operations: true # Must use at least one visual tool
+    
+  # Sampling strategy
+  sampling_strategy:
+    method: "weighted"  # weighted, uniform, or stratified
+    oversample_hard_negatives: true
+    hard_negative_weight: 1.5  # Weight multiplier for trap samples
+
+# ----------------------------------------------------
+# RFT Dataset Recipe
+# ----------------------------------------------------
+# Controls the composition for Reinforcement Fine-Tuning
+rft_dataset_recipe:
+  target_total_samples: 40000
+  
+  # Task proportions (adjusted for RL focus)
+  task_proportions:
+    geometric_comparison: 0.30      # Higher weight on complex tasks
+    targeted_ocr: 0.15
+    spatio_temporal_analysis: 0.25  # Video tasks benefit from RL
+    zoom_in_replication: 0.10
+    select_frame_replication: 0.10
+    general_vqa: 0.10
+  
+  # Trajectory composition for RL
+  trajectory_composition:
+    golden_positive: 0.50  # 50% - Less golden, more exploration
+    trap_samples: 0.25     # 25% - More traps for robustness
+    self_correction: 0.25  # 25% - Critical for RL recovery
+  
+  # RL-specific configuration
+  rl_configuration:
+    include_reward_signals: true
+    include_curiosity_targets: true
+    trajectory_diversity_bonus: 0.1  # Bonus for novel action sequences
+    
+# ----------------------------------------------------
+# Online Learning Dataset Recipe
+# ----------------------------------------------------
+# Controls data collection during TTRL phase
+online_dataset_recipe:
+  # Experience buffer configuration
+  buffer_size: 10000
+  
+  # Prioritization for online learning
+  experience_priorities:
+    high_uncertainty: 0.4   # 40% - Focus on uncertain cases
+    high_reward: 0.3        # 30% - Successful trajectories
+    self_correction: 0.2    # 20% - Recovery examples
+    diverse_actions: 0.1    # 10% - Novel action combinations
+  
+  # Retention policy
+  retention_policy:
+    max_age_days: 90
+    min_confidence_threshold: 0.3
+    keep_all_corrections: true  # Always retain self-correction examples
+
+# ----------------------------------------------------
+# Data Validation Rules
+# ----------------------------------------------------
+validation_rules:
+  # Trajectory validation
+  trajectory_checks:
+    - check_action_validity      # All actions must be valid operations
+    - check_observation_presence  # All actions must have observations
+    - check_answer_consistency    # Final answer must relate to trajectory
+    - check_no_infinite_loops     # No repeated action sequences
+  
+  # Dataset balance validation
+  balance_checks:
+    max_class_imbalance: 3.0  # No class should be >3x another
+    min_samples_per_task: 100  # Each task needs minimum representation
+    
+  # Quality thresholds
+  quality_thresholds:
+    min_dataset_size: 1000
+    max_corruption_rate: 0.01  # Max 1% corrupted samples allowed
+
+# ----------------------------------------------------
+# Augmentation Pipeline
+# ----------------------------------------------------
+augmentation_pipeline:
+  # Order matters - applied sequentially
+  stages:
+    - name: "self_correction_injection"
+      enabled: true
+      config:
+        target_ratio: 0.2
+        distractor_types: ["wrong_coordinates", "incorrect_object", "invalid_operation"]
+        
+    - name: "trap_generation"
+      enabled: true
+      config:
+        target_ratio: 0.2
+        trap_strategies: ["logical_fallacy", "perceptual_confusion", "tool_misuse"]
+        
+    - name: "trajectory_shuffling"
+      enabled: false  # Disabled by default - experimental
+      config:
+        shuffle_probability: 0.1
+
+# ----------------------------------------------------
+# Output Configuration
+# ----------------------------------------------------
+output_configuration:
+  # File formats
+  trajectory_format: "jsonl"  # JSON Lines format
+  
+  # Directory structure
+  output_structure:
+    by_type: true      # Separate files for golden/trap/correction
+    by_task: true      # Separate files per task type
+    combined: true     # Also create combined dataset
+    
+  # Metadata tracking
+  include_metadata:
+    generation_timestamp: true
+    source_datasets: true
+    augmentation_history: true
+    quality_scores: true
+
+# ----------------------------------------------------
+# Monitoring and Logging
+# ----------------------------------------------------
+monitoring:
+  # Statistics to track
+  track_statistics:
+    - trajectory_length_distribution
+    - action_type_frequency
+    - error_recovery_success_rate
+    - dataset_diversity_score
+    
+  # Logging configuration
+  logging:
+    level: "INFO"
+    log_augmentation_details: true
+    log_validation_failures: true
+    save_generation_report: true

@@ -15,12 +15,58 @@ import asyncio
 import threading
 import time
 from typing import Dict, Any
+import pytest
 
 from core.engine.inference_engine import (
     InferenceEngine, SharedMemoryManager, SharedMemoryInfo
 )
 from core.data_structures import VotingResult, Experience, Trajectory
 from core.modules.voting import TemporalEnsembleVoting
+
+
+@pytest.fixture
+def managed_inference_engine():
+    """
+    A pytest fixture that creates a fully mocked InferenceEngine instance for a test
+    and, critically, guarantees its clean shutdown after the test is complete.
+    """
+    # --- SETUP ---
+    # Create all necessary mock objects and a default config
+    mock_model = MagicMock()
+    mock_buffer = MagicMock()
+    mock_voting = MagicMock()
+    mock_orchestrator = MagicMock()
+    config = {
+        'confidence_threshold': 0.7,
+        'min_learning_rate': 1e-6,
+        'max_learning_rate': 1e-4,
+        'hil_mode_enabled': False,
+        'hil_review_percentage': 0.02,
+        'k_neighbors': 5,
+        'voting_strategy': 'weighted',
+        'max_queue_size': 100,
+        'shm_timeout': 60.0,
+        'watchdog_interval': 5.0,
+        'cold_start_threshold': 100,
+        'queue_timeout': 0.1,
+    }
+    
+    engine = InferenceEngine(
+        model=mock_model,
+        experience_buffer=mock_buffer,
+        voting_module=mock_voting,
+        reward_orchestrator=mock_orchestrator,
+        config=config
+    )
+    
+    # Provide the fully constructed engine to the test function
+    yield engine
+    
+    # --- TEARDOWN ---
+    # This block of code is GUARANTEED to run after the test function finishes,
+    # regardless of whether it passed, failed, or raised an exception.
+    print(f"\n[TEARDOWN] Shutting down engine from fixture...")
+    engine.shutdown()
 
 
 class TestSharedMemoryManager(unittest.TestCase):
@@ -127,6 +173,15 @@ class TestInferenceEngine(unittest.TestCase):
             reward_orchestrator=self.mock_orchestrator,
             config=self.config
         )
+    
+    def tearDown(self):
+        """Clean up test fixtures."""
+        # Ensure the engine is properly shut down after each test
+        if hasattr(self, 'engine') and self.engine:
+            try:
+                self.engine.shutdown()
+            except Exception as e:
+                print(f"Warning: Error during engine shutdown in tearDown: {e}")
     
     def test_initialization(self):
         """Test inference engine initialization."""
@@ -1102,6 +1157,15 @@ class TestMissingCoverage(unittest.TestCase):
             reward_orchestrator=self.mock_orchestrator,
             config=self.config
         )
+    
+    def tearDown(self):
+        """Clean up test fixtures."""
+        # Ensure the engine is properly shut down after each test
+        if hasattr(self, 'engine') and self.engine:
+            try:
+                self.engine.shutdown()
+            except Exception as e:
+                print(f"Warning: Error during engine shutdown in tearDown: {e}")
     
     def test_shared_memory_unpinned_tensor_path(self):
         """Test line 81: tensor is not pinned, calls pin_memory()."""

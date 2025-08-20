@@ -67,6 +67,65 @@
         *   Intentionally insert an error in an early step (e.g., use `SEGMENT_OBJECT_AT` on a wrong coordinate).
         *   Prompt the LLM to generate a "correctional" reasoning step, such as: "[Text] That doesn't seem right, the object I found is not what I was looking for. I will try a different location."
         *   Follow this with the correct visual operation and continue the rest of the original correct trajectory.
+*   **[REVISED] Task 7: Synthesize **Iterative Self-Correction** Trajectories.**
+    *   **Goal:** To move beyond simply teaching the model to identify errors (via trap samples) and explicitly teach it the full meta-cognitive loop of **identifying an error, acknowledging it, and formulating a corrective action.**
+    *   **File:** This logic will be implemented as a new module, e.g., `core/data_generation/trajectory_augmenter.py`, and will be called by `scripts/1_generate_specialized_datasets.py`.
+    *   **Action 1: Design the Self-Correction Augmentation Strategy.**
+        *   The process will not generate trajectories from scratch but will **augment** existing, high-quality "golden" trajectories.
+        *   **Input:** A correct trajectory and a corresponding "distractor" action (e.g., a `SEGMENT_OBJECT_AT` call with wrong coordinates).
+    *   **Action 2: Implement the Augmentation Logic.**
+        *   The `TrajectoryAugmenter` module will perform the following steps:
+            1.  **Prepend the Distractor:** Insert the incorrect "distractor" action at the beginning of the golden trajectory's action sequence.
+            2.  **Invoke the "Correction Prompt":** Call a powerful LLM (e.g., GPT-4o) with a highly specific, templated prompt designed to elicit a corrective thought process.
+                *   **Example Correction Prompt:**
+                    ```
+                    You are an AI assistant analyzing a reasoning trace. An incorrect action was just performed, leading to an unhelpful observation. Generate a brief, natural "thought" that acknowledges this mistake and states the intention to try a different approach. The thought should be concise and serve as a bridge to the next, correct action.
+
+                    Incorrect Action Resulted In: [Observation from the distractor action]
+                    Next Correct Action in Trace: [The first action from the golden trajectory]
+
+                    Generate only the corrective thought text. Example: "That doesn't seem right, the object I found is not what I was looking for. I will try a different location."
+                    ```
+            3.  **Inject the Corrective Thought:** Insert the LLM-generated text (e.g., `[Thought] That's not the right area...`) between the distractor action and the rest of the original golden trajectory.
+    *   **Action 3: Integrate into the Main Data Generation Script.**
+        *   The main script (`1_generate_specialized_datasets.py`) will now have a new step. After generating the initial set of golden and trap samples for a task, it will take a fraction of the golden samples and pass them to the `TrajectoryAugmenter` to create a new set of `self-correction` samples.
+
+*   **[NEW] Task 7.5: Update the Data Fusion Manifest to Control Sample Types.**
+    *   **Goal:** To have precise, centralized control over the final dataset composition.
+    *   **File:** `configs/data_fusion_manifest.yaml`.
+    *   **Action:** The manifest will be updated to control the proportion of these advanced trajectory types.
+        ```yaml
+        # In configs/data_fusion_manifest.yaml
+        sft_dataset_recipe:
+          target_total_samples: 60000
+          # ... proportions for geometric_comparison, ocr, etc. ...
+
+          # NEW SECTION for trajectory types
+          trajectory_composition:
+            golden_positive: 0.60  # 60% of samples are simple correct traces
+            trap_samples: 0.20     # 20% are designed to fail (process-negative)
+            self_correction: 0.20  # 20% explicitly demonstrate recovery from failure
+
+        rft_dataset_recipe:
+          # ... similar structure for RFT prompts
+        ```
+        The `scripts/2_fuse_and_validate_dataset.py` script will now be responsible for reading this composition and ensuring the final mixed dataset adheres to these proportions.
+
+---
+
+#### **Part 2: [Modification] Enhance `docs/ARCHITECTURE.md` and Paper Narrative**
+
+This is where we adopt the insightful terminology to strengthen our project's narrative.
+
+*   **[NEW] Task: Document Advanced Training Concepts.**
+    *   **Goal:** To clearly articulate the sophisticated problems our data and training strategies are designed to solve.
+    *   **File:** `docs/ARCHITECTURE.md`.
+    *   **Action 1: Introduce and Define "The Learning Trap".**
+        *   Create a dedicated subsection within the RFT design chapter.
+        *   **Content:** "A primary challenge in training agents with a mix of familiar (textual reasoning) and novel (pixel-space) skills is **The Learning Trap**. This phenomenon, which we identify and address, describes the agent's natural tendency to default to its proficient, high-confidence skills, thereby avoiding the trial-and-error necessary to master new, less certain abilities. Our Curiosity-Driven Reward system is explicitly designed to counteract this trap by providing an intrinsic motivation to explore."
+    *   **Action 2: Position Self-Correction as a Core Capability.**
+        *   In the section describing the SFT dataset, clearly explain the role of self-correction trajectories.
+        *   **Content:** "Beyond simple correctness, we train for robustness. Our dataset includes a significant portion of **Self-Correction Trajectories**. These samples explicitly teach the model a critical meta-cognitive skill: how to recognize an erroneous action's outcome and subsequently formulate a corrective plan. This is essential for robust performance in complex, open-ended environments where mistakes are inevitable."
 
 *   **Task 8: Implement a Data Quality Scoring and Filtering Pipeline.**
     *   **Goal:** To programmatically clean the synthesized dataset and remove low-quality or erroneous samples, ensuring the model is trained on high-fidelity data.

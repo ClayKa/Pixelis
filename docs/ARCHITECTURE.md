@@ -110,10 +110,16 @@ Experience Buffer
 - **LoRA Configuration**: Data-driven rank selection via SVD
 - **Data**: CoTA (Chain-of-Thought-Action) trajectories
 
+##### Self-Correction as a Core Capability
+Beyond simple correctness, we train for robustness. Our dataset includes a significant portion of **Self-Correction Trajectories**. These samples explicitly teach the model a critical meta-cognitive skill: how to recognize an erroneous action's outcome and subsequently formulate a corrective plan. This is essential for robust performance in complex, open-ended environments where mistakes are inevitable. Through these trajectories, the model learns not just to avoid errors, but to gracefully recover from them, demonstrating true reasoning resilience.
+
 #### RFT (Reinforcement Fine-Tuning)
 - **Algorithm**: GRPO (Group Relative Policy Optimization)
 - **Reward Shaping**: Multi-component with curriculum
 - **Trajectory Generation**: Online with reward calculation
+
+##### The Learning Trap
+A primary challenge in training agents with a mix of familiar (textual reasoning) and novel (pixel-space) skills is **The Learning Trap**. This phenomenon, which we identify and address, describes the agent's natural tendency to default to its proficient, high-confidence skills, thereby avoiding the trial-and-error necessary to master new, less certain abilities. Our Curiosity-Driven Reward system is explicitly designed to counteract this trap by providing an intrinsic motivation to explore and engage with unfamiliar visual operations, ensuring balanced skill development across all modalities.
 
 ### Phase 2: Online Evolution (TTRL)
 

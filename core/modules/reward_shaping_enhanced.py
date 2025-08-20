@@ -270,7 +270,8 @@ class PerformanceAwareCuriosityModule(nn.Module):
         state_summary = state.flatten()[:32].cpu().numpy()
         action_summary = action.flatten()[:32].cpu().numpy()
         key_array = np.concatenate([state_summary, action_summary])
-        return key_array.tobytes()
+        # FIX: Convert bytes to hex string for proper cache key
+        return key_array.tobytes().hex()
     
     def _update_cache(self, key: str, value: Tuple):
         """Update LRU cache."""
@@ -744,9 +745,11 @@ class NormalizedRewardOrchestrator:
     def _create_action_embedding(self, action: Dict[str, Any]) -> torch.Tensor:
         """Create action embedding from action dictionary."""
         # Create a structured embedding based on action type
-        embedding = torch.zeros(128).cuda()
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        embedding = torch.zeros(128).to(device)
         
-        operation = action.get('operation', '')
+        # FIX: Support both 'operation' and 'action' keys for compatibility
+        operation = action.get('operation', action.get('action', ''))
         
         # One-hot encode operation type (first 10 dimensions)
         operations = ['SEGMENT_OBJECT_AT', 'READ_TEXT', 'TRACK_OBJECT', 'ZOOM_IN', 'GET_PROPERTIES', 'THINK']
@@ -754,13 +757,19 @@ class NormalizedRewardOrchestrator:
             embedding[operations.index(operation)] = 1.0
         
         # Encode arguments (next dimensions)
+        # FIX: Support both 'arguments' and direct 'coordinates'
         args = action.get('arguments', {})
+        coordinates = action.get('coordinates', [])
+        
         if 'x' in args and 'y' in args:
             embedding[10] = args['x']
             embedding[11] = args['y']
+        elif len(coordinates) >= 2:
+            embedding[10] = coordinates[0] / 1000.0  # Normalize coordinates
+            embedding[11] = coordinates[1] / 1000.0
         
         # Add some random noise for diversity
-        embedding[20:] = torch.randn(108).cuda() * 0.1
+        embedding[20:] = torch.randn(108).to(device) * 0.1
         
         return embedding
     
@@ -792,7 +801,9 @@ class RunningStats:
     """Helper class for maintaining running statistics."""
     
     def __init__(self, window_size: int = 1000):
+        self.window_size = window_size  # FIX: Added window_size attribute
         self.window = deque(maxlen=window_size)
+        self.values = []  # FIX: Added values attribute for test compatibility
         self.mean = 0.0
         self.std = 1.0
         self.count = 0
@@ -800,6 +811,7 @@ class RunningStats:
     def update(self, value: float):
         """Update statistics with new value."""
         self.window.append(value)
+        self.values.append(value)  # FIX: Also append to values list
         self.count += 1
         
         if len(self.window) > 1:

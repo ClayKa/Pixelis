@@ -158,6 +158,30 @@ class TestAsyncCommunication:
         model.state_dict.return_value = {}
         return model
     
+    @pytest.fixture(autouse=True)
+    def cleanup_engine(self):
+        """Automatically clean up any created engines after each test."""
+        self.engines_to_cleanup = []
+        yield
+        # This runs after each test
+        for engine in self.engines_to_cleanup:
+            try:
+                engine.shutdown()
+            except Exception as e:
+                print(f"Warning: Error during engine cleanup: {e}")
+    
+    def _create_engine(self, model, experience_buffer, voting_module, reward_orchestrator, config):
+        """Helper to create an engine and register it for cleanup."""
+        engine = self._create_engine(
+            model=model,
+            experience_buffer=experience_buffer,
+            voting_module=voting_module,
+            reward_orchestrator=reward_orchestrator,
+            config=config
+        )
+        self.engines_to_cleanup.append(engine)
+        return engine
+    
     @pytest.fixture
     def mock_experience_buffer(self):
         """Create a mock experience buffer."""
@@ -210,7 +234,7 @@ class TestAsyncCommunication:
             'watchdog_interval': 5.0
         }
         
-        engine = InferenceEngine(
+        engine = self._create_engine(
             model=mock_model,
             experience_buffer=mock_experience_buffer,
             voting_module=mock_voting_module,
@@ -275,7 +299,7 @@ class TestAsyncCommunication:
             'max_learning_rate': 1e-4
         }
         
-        engine = InferenceEngine(
+        engine = self._create_engine(
             model=mock_model,
             experience_buffer=mock_experience_buffer,
             voting_module=mock_voting_module,
@@ -308,7 +332,7 @@ class TestAsyncCommunication:
             'voting_strategy': 'weighted'
         }
         
-        engine = InferenceEngine(
+        engine = self._create_engine(
             model=mock_model,
             experience_buffer=mock_experience_buffer,
             voting_module=mock_voting_module,
@@ -377,7 +401,7 @@ class TestAsyncCommunication:
         """Test enqueueing update task with shared memory transfer."""
         config = {'confidence_threshold': 0.7}
         
-        engine = InferenceEngine(
+        engine = self._create_engine(
             model=mock_model,
             experience_buffer=mock_experience_buffer,
             voting_module=mock_voting_module,
@@ -444,7 +468,7 @@ class TestFaultTolerance:
         voting_module = MagicMock()
         reward_orchestrator = MagicMock()
         
-        engine = InferenceEngine(
+        engine = self._create_engine(
             model=model,
             experience_buffer=experience_buffer,
             voting_module=voting_module,
@@ -492,7 +516,7 @@ class TestFaultTolerance:
         voting_module = MagicMock()
         reward_orchestrator = MagicMock()
         
-        engine = InferenceEngine(
+        engine = self._create_engine(
             model=model,
             experience_buffer=experience_buffer,
             voting_module=voting_module,
@@ -538,7 +562,7 @@ class TestFaultTolerance:
         voting_module = MagicMock()
         reward_orchestrator = MagicMock()
         
-        engine = InferenceEngine(
+        engine = self._create_engine(
             model=model,
             experience_buffer=experience_buffer,
             voting_module=voting_module,
