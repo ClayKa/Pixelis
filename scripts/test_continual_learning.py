@@ -31,7 +31,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from core.data_structures import Experience
 from core.engine.inference_engine import InferenceEngine
 from core.modules.experience_buffer import ExperienceBuffer
-from core.models.peft_model import PEFTModel
+from core.models.peft_model import PEFTModelFactory, DynamicLoRAConfig
 from core.utils.logging_utils import setup_logging
 
 
@@ -115,11 +115,11 @@ class DomainAdaptationTester:
         )
         
         # For comparison, also load static model
-        self.static_model = PEFTModel(
-            base_model_path=config['model']['path'],
-            lora_config_path=config['model'].get('lora_config'),
-            device=self.device
-        )
+        self.static_model = PEFTModelFactory.create_model_with_lora(
+            model_name=config['model']['path'],
+            lora_config=DynamicLoRAConfig(config['model'].get('lora_config')) if config['model'].get('lora_config') else None,
+            device_map=str(self.device)
+        )[0]  # Get just the model, not the tokenizer
         self.static_model.eval()
     
     def load_domain_data(self, domain: str) -> DataLoader:

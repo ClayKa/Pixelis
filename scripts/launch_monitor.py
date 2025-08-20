@@ -308,7 +308,7 @@ class TrainingMonitor:
             
         # Training time
         elapsed = time.time() - self.start_time
-        metrics_data.append(('Training Time', str(timedelta(seconds=int(elapsed))))
+        metrics_data.append(('Training Time', str(timedelta(seconds=int(elapsed)))))
         
         df = pd.DataFrame(metrics_data, columns=['Metric', 'Value'])
         return df

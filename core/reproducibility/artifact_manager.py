@@ -160,7 +160,11 @@ class WandBStorageBackend(StorageBackend):
         
         # Move to target location
         import shutil
-        source_file = Path(artifact_dir) / file_path.name
+        # Get the first file in the artifact directory
+        artifact_files = list(Path(artifact_dir).iterdir())
+        if not artifact_files:
+            raise FileNotFoundError(f"No files found in artifact: {content_hash[:16]}")
+        source_file = artifact_files[0]
         shutil.move(str(source_file), str(target_path))
         return target_path
 

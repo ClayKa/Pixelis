@@ -34,7 +34,7 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 from core.engine.inference_engine import InferenceEngine
 from core.modules.reward_shaping_enhanced import RewardOrchestrator
-from core.models.peft_model import PEFTModel
+from core.models.peft_model import PEFTModelFactory
 from core.utils.logging_utils import setup_logging
 
 

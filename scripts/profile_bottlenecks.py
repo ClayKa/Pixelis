@@ -49,7 +49,7 @@ from core.engine.inference_engine import InferenceEngine
 from core.modules.experience_buffer import ExperienceBuffer
 from core.modules.dynamics_model import DynamicsModel
 from core.modules.reward_shaping_enhanced import RewardOrchestrator
-from core.models.peft_model import PEFTModel
+from core.models.peft_model import PEFTModelFactory
 from core.utils.logging_utils import setup_logging, get_logger
 
 # Setup logging

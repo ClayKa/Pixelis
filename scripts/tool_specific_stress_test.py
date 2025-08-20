@@ -33,7 +33,7 @@ from core.modules.operations.segment_object import SegmentObjectOperation
 from core.modules.operations.read_text import ReadTextOperation
 from core.modules.operations.track_object import TrackObjectOperation
 from core.modules.operations.get_properties import GetPropertiesOperation
-from core.models.peft_model import PEFTModel
+from core.models.peft_model import PEFTModelFactory, DynamicLoRAConfig
 from core.utils.logging_utils import setup_logging
 
 
@@ -122,11 +122,11 @@ class ToolStressTester:
             config = yaml.safe_load(f)
         
         # Load model
-        self.model = PEFTModel(
-            base_model_path=config['model']['path'],
-            lora_config_path=config['model'].get('lora_config'),
-            device=self.device
-        )
+        self.model = PEFTModelFactory.create_model_with_lora(
+            model_name=config['model']['path'],
+            lora_config=DynamicLoRAConfig(config['model'].get('lora_config')) if config['model'].get('lora_config') else None,
+            device_map=str(self.device)
+        )[0]  # Get just the model, not the tokenizer
         self.model.eval()
         
         # Initialize visual operation tools

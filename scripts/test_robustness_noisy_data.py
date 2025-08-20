@@ -34,7 +34,7 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 from core.engine.inference_engine import InferenceEngine
 from core.modules.experience_buffer import ExperienceBuffer
-from core.models.peft_model import PEFTModel
+from core.models.peft_model import PEFTModelFactory
 from core.utils.logging_utils import setup_logging
 
 
@@ -230,9 +230,19 @@ class NoiseGenerator:
         return compressed_tensor.to(self.device)
 
 
-class RobustnessT
-
-(self, dataloader: DataLoader, use_online: bool, n_samples: int) -> float:
+class RobustnessTester:
+    """Test model robustness to noisy data."""
+    
+    def __init__(self, model_path: str, config: Dict[str, Any]):
+        """Initialize the robustness tester."""
+        self.model_path = model_path
+        self.config = config
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.logger = logging.getLogger(__name__)
+        self.inference_engine = None  # Will be initialized when needed
+        self.baseline_model = None  # Will be loaded when needed
+    
+    def _evaluate_on_subset(self, dataloader: DataLoader, use_online: bool, n_samples: int) -> float:
         """Evaluate model accuracy on a subset of data."""
         correct = 0
         total = 0
