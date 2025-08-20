@@ -28,6 +28,12 @@ from peft import LoraConfig, get_peft_model, TaskType
 # Add project root to path
 sys.path.append(str(Path(__file__).parent.parent))
 
+from core.utils.reproducibility import (
+    set_global_seed,
+    enable_deterministic_mode,
+    get_reproducible_dataloader_kwargs,
+)
+
 
 @dataclass
 class BenchmarkMetrics:
@@ -245,12 +251,18 @@ def run_benchmark(args: argparse.Namespace) -> BenchmarkMetrics:
         vocab_size=vocab_size,
     )
     
+    # Create dataloader with reproducible settings
+    reproducible_kwargs = get_reproducible_dataloader_kwargs(
+        seed=args.seed, 
+        num_workers=args.num_workers
+    )
     dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.num_workers,
         pin_memory=True,
+        **reproducible_kwargs
     )
     
     # Initialize optimizer

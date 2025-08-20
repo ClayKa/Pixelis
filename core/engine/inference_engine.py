@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 import threading
 import numpy as np
 import queue  # Ensure 'queue' is imported for proper exception handling
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,8 @@ logger = logging.getLogger(__name__)
 from ..modules.alerter import Alerter, HealthMonitor, AlertSeverity
 # Import privacy and security modules
 from ..modules.privacy import DataAnonymizer, PrivacyConfig
+# Import context management for distributed tracing
+from ..utils.context import TraceContext, TracedOperation
 
 # Shared memory management classes
 @dataclass
@@ -345,6 +348,7 @@ class InferenceEngine:
     ) -> Tuple[Any, float, Dict[str, Any]]:
         """
         Main inference and adaptation loop with cold start bootstrapping.
+        Enhanced with distributed tracing for end-to-end request tracking.
         
         Orchestrates the complete online evolution loop:
         1. Model inference
@@ -359,192 +363,202 @@ class InferenceEngine:
         Returns:
             Tuple of (prediction, confidence_score, metadata)
         """
-        start_time = time.time()
-        metadata = {
-            'inference_path': 'unknown',
-            'buffer_size': len(self.experience_buffer) if hasattr(self.experience_buffer, '__len__') else 0,
-            'cold_start_active': False
-        }
-        
-        try:
-            # Step 1: Get initial model prediction
-            with torch.no_grad():
-                initial_prediction = await self._get_model_prediction(input_data)
+        # Use TracedOperation context manager for automatic cleanup
+        with TracedOperation(
+            operation_name="infer_and_adapt",
+            component="InferenceEngine",
+            metadata={"input_type": type(input_data).__name__}
+        ) as traced_op:
+            trace_id = traced_op.trace_id
+            logger.info(f"Starting inference request with trace_id: {trace_id}")
             
-            # Task 002: Cold Start Bootstrapping Strategy
-            # Check if we're in cold start mode
-            cold_start_threshold = self.config.get('cold_start_threshold', 100)
-            buffer_size = len(self.experience_buffer) if hasattr(self.experience_buffer, '__len__') else 0
+            start_time = time.time()
+            metadata = {
+                'trace_id': trace_id,
+                'inference_path': 'unknown',
+                'buffer_size': len(self.experience_buffer) if hasattr(self.experience_buffer, '__len__') else 0,
+                'cold_start_active': False
+            }
             
-            if buffer_size < cold_start_threshold:
-                # Conservative mode: bypass ensemble voting, build memory
-                logger.info(
-                    f"Cold start mode active: buffer size {buffer_size} < threshold {cold_start_threshold}"
-                )
-                metadata['cold_start_active'] = True
-                metadata['inference_path'] = 'cold_start_direct'
+            try:
+                # Step 1: Get initial model prediction
+                with torch.no_grad():
+                    initial_prediction = await self._get_model_prediction(input_data)
                 
-                # Add experience to buffer with high priority for rapid memory building
-                await self._add_bootstrap_experience(input_data, initial_prediction)
+                # Task 002: Cold Start Bootstrapping Strategy
+                # Check if we're in cold start mode
+                cold_start_threshold = self.config.get('cold_start_threshold', 100)
+                buffer_size = len(self.experience_buffer) if hasattr(self.experience_buffer, '__len__') else 0
                 
-                # Return direct model prediction without ensemble or updates
-                confidence = initial_prediction.get('confidence', 0.5) if isinstance(initial_prediction, dict) else 0.5
+                if buffer_size < cold_start_threshold:
+                    # Conservative mode: bypass ensemble voting, build memory
+                    logger.info(
+                        f"Cold start mode active: buffer size {buffer_size} < threshold {cold_start_threshold}"
+                    )
+                    metadata['cold_start_active'] = True
+                    metadata['inference_path'] = 'cold_start_direct'
+                    
+                    # Add experience to buffer with high priority for rapid memory building
+                    await self._add_bootstrap_experience(input_data, initial_prediction)
+                    
+                    # Return direct model prediction without ensemble or updates
+                    confidence = initial_prediction.get('confidence', 0.5) if isinstance(initial_prediction, dict) else 0.5
+                    
+                    # Log cold start metrics
+                    self._log_inference_metrics({
+                        'mode': 'cold_start',
+                        'buffer_size': buffer_size,
+                        'confidence': confidence,
+                        'inference_time': time.time() - start_time
+                    })
+                    
+                    # Construct the result dictionary explicitly
+                    if isinstance(initial_prediction, dict):
+                        result_dict = {
+                            "answer": initial_prediction.get('answer', ''),
+                            "trajectory": initial_prediction.get('trajectory', [])
+                        }
+                    else:
+                        # Handle case where initial_prediction is not a dict
+                        result_dict = {
+                            "answer": initial_prediction,
+                            "trajectory": []
+                        }
+                    
+                    return (
+                        result_dict,
+                        confidence,
+                        metadata
+                    )
                 
-                # Log cold start metrics
+                # Normal mode: Full ensemble voting and adaptation
+                metadata['inference_path'] = 'ensemble'
+                
+                # Step 2: Retrieve k-NN neighbors from experience buffer
+                neighbors = []
+                try:
+                    neighbors = self.experience_buffer.search_index(
+                        input_data,
+                        k=self.config.get('k_neighbors', 5)
+                    )
+                    metadata['neighbors_retrieved'] = len(neighbors)
+                except Exception as e:
+                    logger.warning(f"k-NN retrieval failed: {e}")
+                    metadata['knn_failure'] = str(e)
+                    # Track failure rate for monitoring
+                    with self.stats_lock:
+                        self.stats['faiss_failures'] = self.stats.get('faiss_failures', 0) + 1
+                
+                # Step 3: Apply temporal ensemble voting
+                voting_result = None
+                if neighbors:
+                    try:
+                        voting_result = self.voting_module.vote(
+                            initial_prediction,
+                            neighbors,
+                            strategy=self.config.get('voting_strategy', 'weighted')
+                        )
+                        metadata['voting_strategy'] = self.config.get('voting_strategy', 'weighted')
+                        metadata['voting_confidence'] = voting_result.confidence
+                    except Exception as e:
+                        logger.error(f"Voting failed: {e}")
+                        metadata['voting_failure'] = str(e)
+                
+                # Fallback if voting failed
+                if voting_result is None:
+                    from types import SimpleNamespace
+                    # Create properly formatted answer dictionary for consistency
+                    if isinstance(initial_prediction, dict):
+                        answer_dict = {
+                            "answer": initial_prediction.get('answer', ''),
+                            "trajectory": initial_prediction.get('trajectory', [])
+                        }
+                        confidence = initial_prediction.get('confidence', 0.5)
+                    else:
+                        answer_dict = {
+                            "answer": initial_prediction,
+                            "trajectory": []
+                        }
+                        confidence = 0.5
+                    
+                    voting_result = SimpleNamespace(
+                        final_answer=answer_dict,
+                        confidence=confidence,
+                        provenance={'source': 'direct_model', 'fallback': True}
+                    )
+                
+                # Task 003 (Phase 2 Round 6): Check for read-only mode
+                if self.read_only_mode:
+                    logger.debug("Read-only mode active - skipping all updates and learning")
+                    metadata['read_only'] = True
+                    metadata['update_path'] = 'disabled'
+                    # Return response without any updates or storage
+                    return (
+                        voting_result.final_answer,
+                        voting_result.confidence,
+                        {**voting_result.provenance, **metadata}
+                    )
+                
+                # Step 4: Check confidence and potentially trigger update
+                update_triggered = False
+                if self._should_trigger_update(voting_result.confidence):
+                    # Determine if this update should go through human review
+                    if self._should_request_human_review():
+                        await self._enqueue_human_review_task(
+                            input_data,
+                            voting_result,
+                            initial_prediction
+                        )
+                        metadata['update_path'] = 'human_review'
+                    else:
+                        await self._enqueue_update_task(
+                            input_data,
+                            voting_result,
+                            initial_prediction
+                        )
+                        metadata['update_path'] = 'automatic'
+                    update_triggered = True
+                
+                # Step 5: Add to experience buffer for future use (only if not read-only)
+                if not self.read_only_mode:
+                    await self._add_to_experience_buffer(
+                        input_data,
+                        voting_result,
+                        initial_prediction
+                    )
+                
+                # Log comprehensive metrics
                 self._log_inference_metrics({
-                    'mode': 'cold_start',
+                    'mode': 'ensemble',
                     'buffer_size': buffer_size,
-                    'confidence': confidence,
-                    'inference_time': time.time() - start_time
+                    'confidence': voting_result.confidence,
+                    'update_triggered': update_triggered,
+                    'neighbors_used': len(neighbors),
+                    'inference_time': time.time() - start_time,
+                    'queue_sizes': self._get_queue_sizes()
                 })
                 
-                # Construct the result dictionary explicitly
-                if isinstance(initial_prediction, dict):
-                    result_dict = {
-                        "answer": initial_prediction.get('answer', ''),
-                        "trajectory": initial_prediction.get('trajectory', [])
-                    }
-                else:
-                    # Handle case where initial_prediction is not a dict
-                    result_dict = {
-                        "answer": initial_prediction,
-                        "trajectory": []
-                    }
+                # Update metadata with timing
+                metadata['inference_time_ms'] = (time.time() - start_time) * 1000
                 
-                return (
-                    result_dict,
-                    confidence,
-                    metadata
-                )
-            
-            # Normal mode: Full ensemble voting and adaptation
-            metadata['inference_path'] = 'ensemble'
-            
-            # Step 2: Retrieve k-NN neighbors from experience buffer
-            neighbors = []
-            try:
-                neighbors = self.experience_buffer.search_index(
-                    input_data,
-                    k=self.config.get('k_neighbors', 5)
-                )
-                metadata['neighbors_retrieved'] = len(neighbors)
-            except Exception as e:
-                logger.warning(f"k-NN retrieval failed: {e}")
-                metadata['knn_failure'] = str(e)
-                # Track failure rate for monitoring
-                with self.stats_lock:
-                    self.stats['faiss_failures'] = self.stats.get('faiss_failures', 0) + 1
-            
-            # Step 3: Apply temporal ensemble voting
-            voting_result = None
-            if neighbors:
-                try:
-                    voting_result = self.voting_module.vote(
-                        initial_prediction,
-                        neighbors,
-                        strategy=self.config.get('voting_strategy', 'weighted')
-                    )
-                    metadata['voting_strategy'] = self.config.get('voting_strategy', 'weighted')
-                    metadata['voting_confidence'] = voting_result.confidence
-                except Exception as e:
-                    logger.error(f"Voting failed: {e}")
-                    metadata['voting_failure'] = str(e)
-            
-            # Fallback if voting failed
-            if voting_result is None:
-                from types import SimpleNamespace
-                # Create properly formatted answer dictionary for consistency
-                if isinstance(initial_prediction, dict):
-                    answer_dict = {
-                        "answer": initial_prediction.get('answer', ''),
-                        "trajectory": initial_prediction.get('trajectory', [])
-                    }
-                    confidence = initial_prediction.get('confidence', 0.5)
-                else:
-                    answer_dict = {
-                        "answer": initial_prediction,
-                        "trajectory": []
-                    }
-                    confidence = 0.5
-                
-                voting_result = SimpleNamespace(
-                    final_answer=answer_dict,
-                    confidence=confidence,
-                    provenance={'source': 'direct_model', 'fallback': True}
-                )
-            
-            # Task 003 (Phase 2 Round 6): Check for read-only mode
-            if self.read_only_mode:
-                logger.debug("Read-only mode active - skipping all updates and learning")
-                metadata['read_only'] = True
-                metadata['update_path'] = 'disabled'
-                # Return response without any updates or storage
                 return (
                     voting_result.final_answer,
                     voting_result.confidence,
                     {**voting_result.provenance, **metadata}
                 )
             
-            # Step 4: Check confidence and potentially trigger update
-            update_triggered = False
-            if self._should_trigger_update(voting_result.confidence):
-                # Determine if this update should go through human review
-                if self._should_request_human_review():
-                    await self._enqueue_human_review_task(
-                        input_data,
-                        voting_result,
-                        initial_prediction
-                    )
-                    metadata['update_path'] = 'human_review'
-                else:
-                    await self._enqueue_update_task(
-                        input_data,
-                        voting_result,
-                        initial_prediction
-                    )
-                    metadata['update_path'] = 'automatic'
-                update_triggered = True
-            
-            # Step 5: Add to experience buffer for future use (only if not read-only)
-            if not self.read_only_mode:
-                await self._add_to_experience_buffer(
-                    input_data,
-                    voting_result,
-                    initial_prediction
+            except Exception as e:
+                logger.error(f"Critical error in infer_and_adapt: {e}", exc_info=True)
+                # Track critical failures
+                with self.stats_lock:
+                    self.stats['critical_failures'] = self.stats.get('critical_failures', 0) + 1
+                
+                # Return fallback response
+                return (
+                    None,
+                    0.0,
+                    {'error': str(e), 'inference_path': 'error', **metadata}
                 )
-            
-            # Log comprehensive metrics
-            self._log_inference_metrics({
-                'mode': 'ensemble',
-                'buffer_size': buffer_size,
-                'confidence': voting_result.confidence,
-                'update_triggered': update_triggered,
-                'neighbors_used': len(neighbors),
-                'inference_time': time.time() - start_time,
-                'queue_sizes': self._get_queue_sizes()
-            })
-            
-            # Update metadata with timing
-            metadata['inference_time_ms'] = (time.time() - start_time) * 1000
-            
-            return (
-                voting_result.final_answer,
-                voting_result.confidence,
-                {**voting_result.provenance, **metadata}
-            )
-            
-        except Exception as e:
-            logger.error(f"Critical error in infer_and_adapt: {e}", exc_info=True)
-            # Track critical failures
-            with self.stats_lock:
-                self.stats['critical_failures'] = self.stats.get('critical_failures', 0) + 1
-            
-            # Return fallback response
-            return (
-                None,
-                0.0,
-                {'error': str(e), 'inference_path': 'error', **metadata}
-            )
     
     async def _get_model_prediction(
         self,

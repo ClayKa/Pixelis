@@ -39,6 +39,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from core.data_structures import Action, Trajectory, ActionType
 from core.utils.logging_utils import setup_logging, get_logger
+from core.utils.reproducibility import get_reproducible_dataloader_kwargs
 
 # Setup logging
 logger = get_logger(__name__)
@@ -859,7 +860,18 @@ def run_rft_training(
         tokenizer
     )
     
-    dataloader = DataLoader(dataset, batch_size=ppo_config.batch_size, shuffle=True)
+    # Create dataloader with reproducible settings
+    seed = config.get("training", {}).get("seed", 42)
+    num_workers = config.get("data", {}).get("num_workers", 0)
+    
+    reproducible_kwargs = get_reproducible_dataloader_kwargs(seed=seed, num_workers=num_workers)
+    dataloader = DataLoader(
+        dataset, 
+        batch_size=ppo_config.batch_size, 
+        shuffle=True,
+        num_workers=num_workers,
+        **reproducible_kwargs
+    )
     
     # Generation configuration
     generation_config = GenerationConfig(

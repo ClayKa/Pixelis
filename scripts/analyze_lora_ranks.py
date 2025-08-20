@@ -8,6 +8,7 @@ to determine optimal LoRA ranks for parameter-efficient fine-tuning.
 import json
 import logging
 import os
+import sys
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,14 @@ from sklearn.utils.extmath import randomized_svd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from tqdm import tqdm
+
+# Add project root to path for imports
+sys.path.append(str(Path(__file__).parent.parent))
+from core.utils.reproducibility import (
+    set_global_seed,
+    enable_deterministic_mode,
+    get_system_info,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -554,7 +563,33 @@ def main():
         help="Save delta weight matrices (can be memory intensive)"
     )
     
+    # Reproducibility settings
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducibility"
+    )
+    
+    parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="Enable deterministic mode (may reduce performance)"
+    )
+    
     args = parser.parse_args()
+    
+    # Set up reproducibility
+    logger.info(f"Setting random seed to {args.seed}")
+    set_global_seed(args.seed)
+    
+    if args.deterministic:
+        logger.info("Enabling deterministic mode for full reproducibility")
+        enable_deterministic_mode()
+    
+    # Log system information for reproducibility
+    system_info = get_system_info()
+    logger.info(f"System info: {system_info}")
     
     # Create configuration
     config = SVDAnalysisConfig(

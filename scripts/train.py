@@ -27,6 +27,11 @@ from core.reproducibility import (
 )
 from core.config_schema import PixelisConfig as TrainingConfig
 from core.utils.logging_utils import setup_logging, get_logger
+from core.utils.reproducibility import (
+    set_global_seed,
+    enable_deterministic_mode,
+    get_system_info,
+)
 
 # Import SFT training module
 try:
@@ -485,7 +490,33 @@ def main():
         help="Disable hardware monitoring",
     )
     
+    # Reproducibility settings
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducibility",
+    )
+    
+    parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="Enable deterministic mode (may reduce performance)",
+    )
+    
     args = parser.parse_args()
+    
+    # Set up reproducibility
+    logger.info(f"Setting random seed to {args.seed}")
+    set_global_seed(args.seed)
+    
+    if args.deterministic:
+        logger.info("Enabling deterministic mode for full reproducibility")
+        enable_deterministic_mode()
+    
+    # Log system information for reproducibility
+    system_info = get_system_info()
+    logger.info(f"System info: {system_info}")
     
     # Load configuration
     logger.info(f"Loading configuration from {args.config}")
@@ -498,6 +529,12 @@ def main():
         with open(args.config, 'r') as f:
             training_params = yaml.safe_load(f)
             config_dict.update(training_params)
+    
+    # Add reproducibility settings to config
+    if "training" not in config_dict:
+        config_dict["training"] = {}
+    config_dict["training"]["seed"] = args.seed
+    config_dict["training"]["deterministic_mode"] = args.deterministic
     
     # Load model architecture config
     model_config_path = Path("configs/model_arch.yaml")

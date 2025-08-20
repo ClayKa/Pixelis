@@ -245,6 +245,7 @@ class CurriculumManager:
     
     This class tracks performance history, makes advancement decisions,
     and handles automatic rollback when performance drops.
+    Enhanced with metric smoothing and patience mechanisms for stability.
     """
     
     config: Dict[str, Any]
@@ -266,6 +267,82 @@ class CurriculumManager:
         self.performance_window = curriculum_config.get("performance_window", 3)
         self.base_advancement_interval = curriculum_config.get("advancement_interval", 500)
         self.advancement_interval = self.base_advancement_interval
+        
+        # Enhanced settings for stability
+        self.smoothing_window_size = curriculum_config.get("smoothing_window_size", 3)
+        self.patience_cycles = curriculum_config.get("patience_cycles", 2)
+        self.cooldown_cycles = curriculum_config.get("cooldown_cycles", 3)
+        
+        # Initialize enhanced tracking
+        self.metric_history = {
+            "loss": deque(maxlen=self.smoothing_window_size),
+            "accuracy": deque(maxlen=self.smoothing_window_size),
+            "perplexity": deque(maxlen=self.smoothing_window_size),
+        }
+        self.patience_counter = 0
+        self.cooldown_counter = 0
+        self.advancement_counter = 0
+    
+    def _get_smoothed_metric(self, metric_name: str) -> Optional[float]:
+        """
+        Get smoothed value for a metric using moving average.
+        
+        Args:
+            metric_name: Name of the metric to smooth
+            
+        Returns:
+            Smoothed metric value or None if insufficient data
+        """
+        history = self.metric_history.get(metric_name, deque())
+        if not history or len(history) < self.smoothing_window_size:
+            return None  # Not enough data to compute smoothed value
+        return np.mean(list(history))
+    
+    def _update_metric_history(self, metrics: Dict[str, float]):
+        """
+        Update the metric history with new values.
+        
+        Args:
+            metrics: Dictionary of metric names and values
+        """
+        for name, value in metrics.items():
+            if name in self.metric_history:
+                self.metric_history[name].append(value)
+    
+    def _check_advancement_criteria(self) -> bool:
+        """
+        Check if advancement criteria are met using smoothed metrics.
+        
+        Returns:
+            True if criteria are met, False otherwise
+        """
+        # Get current stage's exit criteria
+        stage = self.current_stage
+        exit_criteria = stage.get("exit_criteria", {})
+        
+        if not exit_criteria:
+            # Default criteria: check accuracy
+            smoothed_accuracy = self._get_smoothed_metric("accuracy")
+            if smoothed_accuracy is None:
+                return False
+            return smoothed_accuracy >= self.min_performance
+        
+        # Check all specified criteria
+        for metric_name, threshold in exit_criteria.items():
+            smoothed_value = self._get_smoothed_metric(metric_name)
+            if smoothed_value is None:
+                return False
+            
+            # For loss, lower is better
+            if metric_name == "loss":
+                if smoothed_value > threshold:
+                    return False
+            else:
+                # For accuracy and other metrics, higher is better
+                if smoothed_value < threshold:
+                    return False
+        
+        return True
     
     @property
     def current_stage(self) -> Dict[str, Any]:
@@ -284,6 +361,7 @@ class CurriculumManager:
     def should_attempt_advance(self, global_step: int) -> bool:
         """
         Check if we should attempt to advance the curriculum.
+        Enhanced with cooldown mechanism for stability.
         
         Args:
             global_step: Current training step
@@ -291,6 +369,11 @@ class CurriculumManager:
         Returns:
             Whether to attempt advancement
         """
+        # Check if we're in cooldown period (either after advancement or rollback)
+        if self.cooldown_counter > 0:
+            self.cooldown_counter -= 1
+            return False
+        
         # Check if we're in cooldown after rollback
         if self.steps_since_rollback < self.rollback_cooldown:
             return False
@@ -309,27 +392,45 @@ class CurriculumManager:
         if max_steps and global_step >= max_steps:
             return True
         
-        return self.steps_since_advance >= self.advancement_interval
+        # Check if advancement criteria are met using smoothed metrics
+        if self._check_advancement_criteria():
+            self.patience_counter += 1
+            
+            # Need sustained performance for patience_cycles
+            if self.patience_counter >= self.patience_cycles:
+                self.patience_counter = 0
+                return True
+        else:
+            self.patience_counter = 0  # Reset if criteria not met
+        
+        return False
     
     def decide_and_update(
         self,
         perf_before: float,
         perf_after: float,
         dataset: CurriculumDataset,
-        global_step: int
+        global_step: int,
+        metrics: Optional[Dict[str, float]] = None
     ) -> Tuple[bool, str]:
         """
         Decide whether to keep advancement or rollback based on performance.
+        Enhanced with metric smoothing for stability.
         
         Args:
             perf_before: Performance before advancement
             perf_after: Performance after advancement
             dataset: The curriculum dataset
             global_step: Current training step
+            metrics: Optional dictionary of current metrics
             
         Returns:
             Tuple of (advanced, message)
         """
+        # Update metric history if provided
+        if metrics:
+            self._update_metric_history(metrics)
+        
         # Record performance
         self.performance_history.append(perf_after)
         
@@ -392,6 +493,7 @@ class CurriculumManager:
     def advance(self, dataset: CurriculumDataset) -> Dict[str, float]:
         """
         Advance to the next curriculum stage.
+        Enhanced with cooldown mechanism.
         
         Args:
             dataset: The curriculum dataset to update
@@ -402,13 +504,18 @@ class CurriculumManager:
         if self.current_stage_idx < len(self.stages) - 1:
             self.current_stage_idx += 1
             self.steps_since_advance = 0
+            self.advancement_counter += 1
+            
+            # Start cooldown period after advancement
+            self.cooldown_counter = self.cooldown_cycles
             
             new_weights = self.current_weights
             old_weights = dataset.advance_curriculum(new_weights)
             
             logger.info(
                 f"Advanced to stage {self.current_stage_idx}: "
-                f"{self.current_stage['name']}"
+                f"{self.current_stage['name']}. "
+                f"Cooldown for {self.cooldown_cycles} cycles."
             )
             
             return new_weights
@@ -418,6 +525,7 @@ class CurriculumManager:
     def rollback(self, dataset: CurriculumDataset):
         """
         Rollback to the previous curriculum stage.
+        Enhanced with cooldown mechanism.
         
         Args:
             dataset: The curriculum dataset to update
@@ -426,6 +534,9 @@ class CurriculumManager:
             self.current_stage_idx -= 1
             self.rollback_count += 1
             self.steps_since_rollback = 0
+            
+            # Start cooldown period after rollback
+            self.cooldown_counter = self.cooldown_cycles
             
             # Increase advancement interval after rollback
             self.advancement_interval = int(
@@ -439,7 +550,8 @@ class CurriculumManager:
             logger.warning(
                 f"Rolled back to stage {self.current_stage_idx}: "
                 f"{self.current_stage['name']}. "
-                f"Next advancement in {self.advancement_interval} steps."
+                f"Next advancement in {self.advancement_interval} steps. "
+                f"Cooldown for {self.cooldown_cycles} cycles."
             )
     
     def update_step_counters(self):
@@ -448,16 +560,23 @@ class CurriculumManager:
         self.steps_since_rollback += 1
     
     def get_status(self) -> Dict[str, Any]:
-        """Get current curriculum status."""
+        """Get current curriculum status with enhanced tracking."""
         return {
             "stage_idx": self.current_stage_idx,
             "stage_name": self.current_stage.get("name", "unknown"),
             "weights": self.current_weights,
             "rollback_count": self.rollback_count,
+            "advancement_count": self.advancement_counter,
             "steps_since_advance": self.steps_since_advance,
             "steps_since_rollback": self.steps_since_rollback,
             "advancement_interval": self.advancement_interval,
             "performance_history": list(self.performance_history),
+            "patience_counter": self.patience_counter,
+            "cooldown_counter": self.cooldown_counter,
+            "smoothed_metrics": {
+                name: self._get_smoothed_metric(name)
+                for name in self.metric_history.keys()
+            },
         }
 
 

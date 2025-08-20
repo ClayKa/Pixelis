@@ -22,6 +22,11 @@ from core.reproducibility import (
     track_artifacts,
 )
 from core.utils.logging_utils import setup_logging, get_logger
+from core.utils.reproducibility import (
+    set_global_seed,
+    enable_deterministic_mode,
+    get_system_info,
+)
 
 # Setup logging
 setup_logging()
@@ -327,11 +332,39 @@ def main():
         help="Run in offline mode",
     )
     
+    # Reproducibility settings
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed for reproducibility",
+    )
+    
+    parser.add_argument(
+        "--deterministic",
+        action="store_true",
+        help="Enable deterministic mode (may reduce performance)",
+    )
+    
     args = parser.parse_args()
+    
+    # Set up reproducibility
+    logger.info(f"Setting random seed to {args.seed}")
+    set_global_seed(args.seed)
+    
+    if args.deterministic:
+        logger.info("Enabling deterministic mode for full reproducibility")
+        enable_deterministic_mode()
+    
+    # Log system information for reproducibility
+    system_info = get_system_info()
+    logger.info(f"System info: {system_info}")
     
     # Prepare configuration
     config = {
         "benchmark_name": args.benchmark,
+        "seed": args.seed,
+        "deterministic_mode": args.deterministic,
     }
     
     # Load benchmark configuration if provided

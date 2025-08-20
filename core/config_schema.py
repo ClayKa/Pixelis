@@ -202,6 +202,39 @@ class RewardConfig:
 
 
 @dataclass
+class CurriculumConfig:
+    """Configuration for curriculum learning with enhanced stability."""
+    
+    # Enable curriculum learning
+    enabled: bool = True
+    
+    # Stage configuration
+    stages: List[Dict[str, Any]] = field(default_factory=list)
+    
+    # Advancement settings
+    advancement_interval: int = 500
+    min_performance_for_advance: float = 0.6
+    
+    # Rollback settings
+    rollback_enabled: bool = True
+    rollback_threshold: float = -0.05
+    rollback_cooldown: int = 1000
+    rollback_factor: float = 2.0
+    
+    # Performance tracking
+    performance_window: int = 3
+    
+    # Enhanced stability settings
+    smoothing_window_size: int = 3
+    patience_cycles: int = 2
+    cooldown_cycles: int = 3
+    
+    # Data paths
+    data_path: str = "data/processed/curriculum"
+    use_split_files: bool = True
+
+
+@dataclass
 class OnlineConfig:
     """Configuration for online learning."""
     
@@ -419,6 +452,7 @@ class PixelisConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     reward: RewardConfig = field(default_factory=RewardConfig)
+    curriculum: CurriculumConfig = field(default_factory=CurriculumConfig)
     online: OnlineConfig = field(default_factory=OnlineConfig)
     data: DataConfig = field(default_factory=DataConfig)
     experiment: ExperimentConfig = field(default_factory=ExperimentConfig)
