@@ -1,258 +1,92 @@
-Of course. Here is a comprehensive, detailed, and actionable plan written in English to integrate these powerful concepts into your project. This plan will ensure you not only match but exceed the standard set by the original Pixel-Reasoner paper in terms of data strategy and model capability.
+Of course. Here is a detailed, professional plan for writing unit tests for your data generators. This plan follows the principles of Test-Driven Development (TDD) and ensures that your data generation pipeline is robust, correct, and maintainable.
 
 ---
 
-### **Action Plan: Achieving Parity and Superiority in Data-Driven Model Behavior**
+### **Action Plan: Unit Testing the Data Generation Pipeline**
 
-**Objective:** To enhance the `Pixelis` project by incorporating the core data strategy insights from the Pixel-Reasoner paper, specifically regarding "Self-Correction" trajectories, while leveraging our superior data engineering pipeline.
+**Objective:** To create a comprehensive suite of unit tests for the data generation modules (`core/data_generation/`) to verify their correctness, robustness against malformed inputs, and adherence to the defined output schema before running the full, expensive data synthesis pipeline.
 
-This plan will be broken down into actionable tasks that modify our existing project roadmap.
-
----
-
-#### **Part 1: [Modification] Enhance `Phase 1, Round 1` - Data Synthesis and Enrichment**
-
-This is where we will implement the core logic for generating self-correction trajectories.
-
-*   **[REVISED] Task 7: Synthesize **Iterative Self-Correction** Trajectories.**
-    *   **Goal:** To move beyond simply teaching the model to identify errors (via trap samples) and explicitly teach it the full meta-cognitive loop of **identifying an error, acknowledging it, and formulating a corrective action.**
-    *   **File:** This logic will be implemented as a new module, e.g., `core/data_generation/trajectory_augmenter.py`, and will be called by `scripts/1_generate_specialized_datasets.py`.
-    *   **Action 1: Design the Self-Correction Augmentation Strategy.**
-        *   The process will not generate trajectories from scratch but will **augment** existing, high-quality "golden" trajectories.
-        *   **Input:** A correct trajectory and a corresponding "distractor" action (e.g., a `SEGMENT_OBJECT_AT` call with wrong coordinates).
-    *   **Action 2: Implement the Augmentation Logic.**
-        *   The `TrajectoryAugmenter` module will perform the following steps:
-            1.  **Prepend the Distractor:** Insert the incorrect "distractor" action at the beginning of the golden trajectory's action sequence.
-            2.  **Invoke the "Correction Prompt":** Call a powerful LLM (e.g., GPT-4o) with a highly specific, templated prompt designed to elicit a corrective thought process.
-                *   **Example Correction Prompt:**
-                    ```
-                    You are an AI assistant analyzing a reasoning trace. An incorrect action was just performed, leading to an unhelpful observation. Generate a brief, natural "thought" that acknowledges this mistake and states the intention to try a different approach. The thought should be concise and serve as a bridge to the next, correct action.
-
-                    Incorrect Action Resulted In: [Observation from the distractor action]
-                    Next Correct Action in Trace: [The first action from the golden trajectory]
-
-                    Generate only the corrective thought text. Example: "That doesn't seem right, the object I found is not what I was looking for. I will try a different location."
-                    ```
-            3.  **Inject the Corrective Thought:** Insert the LLM-generated text (e.g., `[Thought] That's not the right area...`) between the distractor action and the rest of the original golden trajectory.
-    *   **Action 3: Integrate into the Main Data Generation Script.**
-        *   The main script (`1_generate_specialized_datasets.py`) will now have a new step. After generating the initial set of golden and trap samples for a task, it will take a fraction of the golden samples and pass them to the `TrajectoryAugmenter` to create a new set of `self-correction` samples.
-
-*   **[NEW] Task 7.5: Update the Data Fusion Manifest to Control Sample Types.**
-    *   **Goal:** To have precise, centralized control over the final dataset composition.
-    *   **File:** `configs/data_fusion_manifest.yaml`.
-    *   **Action:** The manifest will be updated to control the proportion of these advanced trajectory types.
-        ```yaml
-        # In configs/data_fusion_manifest.yaml
-        sft_dataset_recipe:
-          target_total_samples: 60000
-          # ... proportions for geometric_comparison, ocr, etc. ...
-
-          # NEW SECTION for trajectory types
-          trajectory_composition:
-            golden_positive: 0.60  # 60% of samples are simple correct traces
-            trap_samples: 0.20     # 20% are designed to fail (process-negative)
-            self_correction: 0.20  # 20% explicitly demonstrate recovery from failure
-
-        rft_dataset_recipe:
-          # ... similar structure for RFT prompts
-        ```
-        The `scripts/2_fuse_and_validate_dataset.py` script will now be responsible for reading this composition and ensuring the final mixed dataset adheres to these proportions.
+**Guiding Principle:** Each `TaskGenerator` is a complex piece of software. It must be tested in isolation to guarantee its reliability.
 
 ---
 
-#### **Part 2: [Modification] Enhance `docs/ARCHITECTURE.md` and Paper Narrative**
+#### **Phase 1: Setup and Scaffolding**
 
-This is where we adopt the insightful terminology to strengthen our project's narrative.
+*   **Task 1: Create the Test Scaffolding.**
+    *   **File:** `tests/data_generation/test_generators.py` (create a new file).
+    *   **Action:**
+        1.  Create the directory `tests/data_generation/`.
+        2.  Inside it, create an `__init__.py` file and the main test file `test_generators.py`.
+        3.  In this file, import `pytest` and all the `TaskGenerator` classes you plan to create from `core.data_generation`.
 
-*   **[NEW] Task: Document Advanced Training Concepts.**
-    *   **Goal:** To clearly articulate the sophisticated problems our data and training strategies are designed to solve.
-    *   **File:** `docs/ARCHITECTURE.md`.
-    *   **Action 1: Introduce and Define "The Learning Trap".**
-        *   Create a dedicated subsection within the RFT design chapter.
-        *   **Content:** "A primary challenge in training agents with a mix of familiar (textual reasoning) and novel (pixel-space) skills is **The Learning Trap**. This phenomenon, which we identify and address, describes the agent's natural tendency to default to its proficient, high-confidence skills, thereby avoiding the trial-and-error necessary to master new, less certain abilities. Our Curiosity-Driven Reward system is explicitly designed to counteract this trap by providing an intrinsic motivation to explore."
-    *   **Action 2: Position Self-Correction as a Core Capability.**
-        *   In the section describing the SFT dataset, clearly explain the role of self-correction trajectories.
-        *   **Content:** "Beyond simple correctness, we train for robustness. Our dataset includes a significant portion of **Self-Correction Trajectories**. These samples explicitly teach the model a critical meta-cognitive skill: how to recognize an erroneous action's outcome and subsequently formulate a corrective plan. This is essential for robust performance in complex, open-ended environments where mistakes are inevitable."
-
----
-
-### **Expected Outcomes of This Implementation**
-
-By implementing this plan, you will have successfully:
-
-1.  **Achieved Feature Parity:** You can now generate high-quality "Self-Correction" trajectories, matching a key innovation of the Pixel-Reasoner paper.
-2.  **Maintained Engineering Superiority:** You are implementing this within your more robust, flexible, and controllable two-stage, configuration-driven data engineering pipeline.
-3.  **Elevated Your Narrative:** You have adopted powerful, insightful terminology ("Learning Trap") that sharpens your project's story and demonstrates a deeper understanding of the core research problems.
-4.  **Enhanced Model Capability:** Your final model will not only be more capable of identifying errors but will also have learned a concrete strategy for recovering from them, making it fundamentally more robust.
-
-This enhancement is low-cost in terms of implementation effort but will yield a massive return on investment in terms of final model performance and the quality of your research narrative. You are now perfectly positioned to not just replicate, but to significantly surpass the original work.
-
-Excellent idea. A well-designed, templated YAML file is the key to making this complex strategy easy to manage and execute.
-
-Here is a comprehensive, template-style YAML file designed for your project. I will use clear comments (`#`) to explain the purpose of each section and explicitly mark the parts you will need to modify with `CHANGEME`.
+*   **Task 2: Create Mock Data Fixtures.**
+    *   **Goal:** To create small, self-contained, and deterministic "toy" versions of your source datasets. These fixtures are essential for fast and reproducible testing without any external dependencies.
+    *   **Directory:** Create a new directory `tests/fixtures/mock_data/`.
+    *   **Action:** Inside this directory, create mock data for each source type:
+        1.  **`mock_coco.json`**: A tiny JSON file containing annotations for 2-3 images, with a few objects each. It must match the structure of the real COCO annotation file.
+        2.  **`mock_infographics_vqa.jsonl`**: A small `.jsonl` file with 2-3 samples, containing `bbox` and `text` fields.
+        3.  **`mock_mot17_annotations.txt`**: A small text file simulating MOT17 tracking data for a few frames and 2 objects.
+        4.  Create a corresponding directory `tests/fixtures/mock_data/images/` and place the 2-3 actual image files referenced in `mock_coco.json`.
 
 ---
 
-### **Template YAML File: `configs/data_generation_manifest.yaml`**
+#### **Phase 2: Writing the Unit Tests (One Generator at a Time)**
 
-```yaml
-# ====================================================================
-# Data Generation Manifest for the Pixelis Project
-# ====================================================================
-# This file is the single source of truth for all data synthesis.
-# It defines WHAT data sources to use and HOW to use them to generate
-# the final training datasets.
-# ====================================================================
+**Strategy:** For each `TaskGenerator` class, we will write a dedicated test class. Let's use `GeometricComparisonTaskGenerator` as the primary example.
 
-# ----------------------------------------------------
-# Section 1: Datasource Registry
-# ----------------------------------------------------
-# Description: Register all approved, raw datasets here. The `type` key helps
-# the generator scripts understand how to parse the annotations.
-#
-# ACTION: You MUST modify the `path` and `annotation_file` for each
-#         entry to point to the correct location on your local machine or server.
-# ----------------------------------------------------
-datasources:
-  coco_train:
-    path: "/path/to/your/coco/train2017" # <-- CHANGEME
-    annotation_file: "/path/to/your/coco/annotations/instances_train2017.json" # <-- CHANGEME
-    type: "ObjectSegmentation"
+*   **Task 3: Test the `GeometricComparisonTaskGenerator`.**
+    *   **File:** `tests/data_generation/test_generators.py`
+    *   **Action:** Create a new test class `TestGeometricComparisonTaskGenerator`.
+    *   **Sub-Task 3.1: Write a `setup` method.**
+        *   Use `pytest.fixture` or a simple setup method to initialize an instance of `GeometricComparisonTaskGenerator`, pointing it to your **mock data fixtures**. This ensures every test starts with a clean slate.
+    *   **Sub-Task 3.2: Test for Successful Generation (The "Happy Path").**
+        *   **Test Function:** `test_generate_single_sample_successfully()`.
+        *   **Logic:**
+            1.  Call `generator.generate(num_samples=1)`.
+            2.  **Assert** that the result is a list containing exactly one dictionary.
+            3.  Take the first sample from the list.
+            4.  **Assert** that the sample's top-level keys match your defined schema (e.g., `question`, `trajectory`, `final_answer`, `provenance`).
+            5.  **Assert** that the `provenance` field correctly points to your mock COCO data source.
+            6.  **Assert** that the `trajectory` is a list and contains calls to the expected tools (`SEGMENT_OBJECT_AT`, `GET_PROPERTIES`).
+            7.  **Assert** that the `final_answer` is of the correct type and format.
+    *   **Sub-Task 3.3: Test for Robustness Against Malformed Data.**
+        *   **Test Function:** `test_handles_annotations_with_missing_area()`.
+        *   **Logic:**
+            1.  Create a temporary, malformed mock annotation file where an object is missing its "area" key.
+            2.  Initialize the generator with this bad data.
+            3.  Call `generator.generate(num_samples=10)`.
+            4.  **Assert** that the generator does not crash. It should gracefully handle the error (e.g., by skipping that malformed object) and still return a list of successfully generated samples (which might be less than 10).
+    *   **Sub-Task 3.4: Test for Edge Cases.**
+        *   **Test Function:** `test_handles_image_with_single_object()`.
+        *   **Logic:**
+            1.  Create a mock annotation for an image with only one object.
+            2.  Call `generator.generate(num_samples=1)`.
+            3.  **Assert** that the generator returns an empty list or handles this case gracefully, as a comparison task cannot be generated. This prevents index-out-of-bounds errors.
 
-  part_imagenet_subset:
-    path: "/path/to/your/part_imagenet_subset" # <-- CHANGEME
-    type: "PartSegmentation"
-
-  infographics_vqa:
-    path: "/path/to/your/infographics_vqa" # <-- CHANGEME
-    type: "OCR"
-
-  mot17:
-    path: "/path/to/your/mot17" # <-- CHANGEME
-    type: "ObjectTracking"
-
-  sa1b_subset:
-    path: "/path/to/your/sa1b_subset" # <-- CHANGEME
-    type: "HighResolutionImage"
-
-  starqa_subset:
-    path: "/path/to/your/starqa_subset" # <-- CHANGEME
-    type: "AnnotatedVideo"
-
-# ----------------------------------------------------
-# Section 2: Task Generation Recipes
-# ----------------------------------------------------
-# Description: Defines the "recipes" for generating specialized datasets.
-# Each recipe specifies the generator, the target sample count, and the
-# raw data sources to use.
-#
-# ACTION: You can modify the `target_sample_count` for each task
-#         to control the size of the generated datasets. The initial
-#         values are based on our expert recommendations.
-# ----------------------------------------------------
-tasks:
-  # --- For Pixel-Reasoner Baseline Replication ---
-  zoom_in_replication:
-    enabled: true
-    task_generator_class: "ZoomInTaskGenerator"
-    target_sample_count: 5000 # <-- CHANGEME (optional, expert recommendation)
-    source_datasets:
-      - sa1b_subset
-
-  select_frame_replication:
-    enabled: true
-    task_generator_class: "SelectFrameTaskGenerator"
-    target_sample_count: 5000 # <-- CHANGEME (optional, expert recommendation)
-    source_datasets:
-      - starqa_subset
-
-  # --- For Pixelis's New Capabilities ---
-  geometric_comparison:
-    enabled: true
-    task_generator_class: "GeometricComparisonTaskGenerator"
-    target_sample_count: 15000 # <-- CHANGEME (optional, expert recommendation)
-    source_datasets:
-      - name: coco_train
-        weight: 0.7 # 70% of samples will originate from COCO
-      - name: part_imagenet_subset
-        weight: 0.3 # 30% from PartImageNet
-
-  targeted_ocr:
-    enabled: true
-    task_generator_class: "TargetedOCRTaskGenerator"
-    target_sample_count: 10000 # <-- CHANGEME (optional, expert recommendation)
-    source_datasets:
-      - infographics_vqa
-
-  spatio_temporal_analysis:
-    enabled: true
-    task_generator_class: "SpatioTemporalTaskGenerator"
-    target_sample_count: 10000 # <-- CHANGEME (optional, expert recommendation)
-    source_datasets:
-      - mot17
-
-# ----------------------------------------------------
-# Section 3: Trajectory Augmentation & Composition
-# ----------------------------------------------------
-# Description: Defines the strategies for enriching the generated data
-# with advanced samples like self-correction and trap trajectories.
-# These proportions are applied AFTER the initial generation.
-#
-# ACTION: You can modify the `proportions` to experiment with
-#         different data compositions. The sum should ideally be 1.0.
-# ----------------------------------------------------
-trajectory_augmentation:
-  # Proportions applied to the TOTAL pool of generated "golden" trajectories
-  # from the tasks above.
-  proportions:
-    golden_positive: 0.6  # 60% will remain as standard correct trajectories
-    trap_samples: 0.2     # 20% will be converted to process-negative "trap" samples
-    self_correction: 0.2  # 20% will be augmented into self-correction traces
-
-# ----------------------------------------------------
-# Section 4: Global Output & API Configuration
-# ----------------------------------------------------
-# Description: Global settings for the generation script.
-#
-# ACTION: You MUST modify `output_dir` and the `api_config` section.
-# ----------------------------------------------------
-global_config:
-  # The directory where the specialized .jsonl files will be saved.
-  output_dir: "data_outputs/specialized/" # <-- CHANGEME (optional, good default)
-
-  api_config:
-    model: "gpt-4o-2024-05-13" # The model used for generating text portions of traces
-    api_key_env_variable: "OPENAI_API_KEY" # Name of the environment variable for the API key
-    # You might add other parameters here like rate_limit_per_minute, etc.
-```
+*   **Task 4: Repeat the Testing Pattern for All Other Generators.**
+    *   **Action:** Following the exact same pattern as Task 3, create new test classes (`TestTargetedOCRTaskGenerator`, `TestSpatioTemporalTaskGenerator`, etc.).
+    *   **For each generator, you must test:**
+        1.  **The Happy Path:** Does it successfully generate a valid sample?
+        2.  **Robustness:** How does it handle malformed or incomplete annotations in its source data?
+        3.  **Edge Cases:** What happens with unusual inputs (e.g., videos with no moving objects for the tracking generator)?
 
 ---
 
-### **How to Use and Modify This File**
+#### **Phase 3: Testing the Augmenter and Final Integration**
 
-Here’s a clear guide on what you need to do:
+*   **Task 5: Test the `TrajectoryAugmenter`.**
+    *   **File:** `tests/data_generation/test_augmenter.py` (a new file).
+    *   **Action:**
+        *   **Sub-Task 5.1: Create mock "golden" trajectories.** These can be simple Python dictionaries.
+        *   **Sub-Task 5.2: Mock the LLM Call.** Use `pytest-mock` (or `unittest.mock`) to **patch the API call**. You do not want your unit tests to make real, slow, expensive network requests. The mock should return a fixed, deterministic "correction thought".
+        *   **Sub-Task 5.3: Test Self-Correction Augmentation.**
+            *   **Test Function:** `test_self_correction_augmenter()`.
+            *   **Logic:**
+                1.  Pass a golden trajectory to the augmenter.
+                2.  Call the `augment_self_correction()` method.
+                3.  **Assert** that the returned trajectory is longer than the original.
+                4.  **Assert** that the first action is the "distractor" action.
+                5.  **Assert** that the trajectory now contains the mocked "correction thought".
+                6.  **Assert** that the rest of the trajectory matches the original golden path.
 
-1.  **Create the File:**
-    *   In your project, inside the `configs/` directory, create a new file named `data_generation_manifest.yaml`.
-    *   Copy the entire content from the template above into this new file.
-
-2.  **Modify the `datasources` Section (MANDATORY):**
-    *   This is the **most important part** you need to configure.
-    *   Go through each entry (e.g., `coco_train`, `part_imagenet_subset`).
-    *   Change the `path` and `annotation_file` values to the **exact, absolute paths** where you have stored these datasets on your computer or research cluster.
-
-3.  **Review the `tasks` Section (OPTIONAL):**
-    *   The `target_sample_count` values have been pre-filled based on my expert recommendation for a high-quality 7B model fine-tuning. For your first run, you should probably keep them as they are.
-    *   In the future, if you find your model is weak in a specific area (e.g., geometry), you can come back here and increase the `target_sample_count` for `geometric_comparison`.
-
-4.  **Review the `trajectory_augmentation` Section (OPTIONAL):**
-    *   The 60% / 20% / 20% split is a very strong and balanced starting point. It ensures the model sees plenty of correct examples while also being robustly trained on identifying and recovering from errors.
-    *   You can later experiment by changing these proportions (e.g., increasing `self_correction` to 25% and decreasing `golden_positive` to 55%) to see how it affects model behavior.
-
-5.  **Modify the `global_config` Section (MANDATORY):**
-    *   **`output_dir`**: The default `data_outputs/specialized/` is a good choice, but you can change it if you prefer a different location.
-    *   **`api_config`**:
-        *   Confirm that `model` is the one you want to use for text generation.
-        *   **Crucially**, ensure you have an environment variable named `OPENAI_API_KEY` set in your system, or change `api_key_env_variable` to whatever name you use for your key.
-
-By following these steps, your data generation pipeline will be fully configured. The `1_generate_specialized_datasets.py` script will read this file and know exactly what to do, which sources to use, and how many samples of each type to generate, all without you having to change a single line of Python code.
+By following this comprehensive plan, you will build a powerful safety net for your entire data generation pipeline. When you finally run the full-scale generation, you can be highly confident that the process is robust, correct, and will produce the high-quality data your model deserves.

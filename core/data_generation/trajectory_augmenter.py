@@ -204,7 +204,9 @@ class TrajectoryAugmenter:
         """
         # Analyze first action in the trajectory
         if not trajectory.actions:
-            return None
+            # For empty trajectories, return a default distractor
+            default_distractors = self.distractor_templates.get('SEGMENT_OBJECT_AT', [])
+            return random.choice(default_distractors) if default_distractors else None
             
         first_action = trajectory.actions[0]
         
@@ -273,9 +275,12 @@ Observation: {distractor.observation}
             
         prompt += "\nGenerate only the corrective thought text. Example: 'That doesn't seem right, the object I found is not what I was looking for. I will try a different location.'"
         
-        # This would call the actual LLM API
-        # For now, return a template response
-        return "That approach didn't yield the expected results. Let me reconsider and try a different strategy."
+        # Check if LLM client is available and has generate method
+        if self.llm_client and hasattr(self.llm_client, 'generate'):
+            return self.llm_client.generate(prompt)
+        else:
+            # Fallback to template response
+            return "That approach didn't yield the expected results. Let me reconsider and try a different strategy."
         
     def batch_augment(
         self,
