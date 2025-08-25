@@ -8,9 +8,10 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 from typing import Dict, Any, List, Optional, Tuple, Union
-from ..operation_registry import BaseOperation, registry
+from ..operation_registry import BaseOperation, registry, register_operation
 
 
+@register_operation("ZOOM_IN")
 class ZoomInOperation(BaseOperation):
     """
     Zooms into a specific region of an image with optional enhancement.
@@ -394,11 +395,16 @@ class ZoomInOperation(BaseOperation):
         edge_magnitude = torch.sqrt(edges_x**2 + edges_y**2)
         edge_density = (edge_magnitude > edge_magnitude.mean()).float().mean().item()
         
+        # Ensure all values are non-negative for geometric mean calculation
+        sharpness_val = max(0, float(sharpness))
+        contrast_val = max(0, float(contrast))
+        edge_density_val = max(0, float(edge_density))
+        
         metrics = {
-            'sharpness': float(sharpness),
-            'contrast': float(contrast),
-            'edge_density': float(edge_density),
-            'quality_score': float((sharpness * contrast * edge_density) ** (1/3))  # Geometric mean
+            'sharpness': sharpness_val,
+            'contrast': contrast_val,
+            'edge_density': edge_density_val,
+            'quality_score': float((sharpness_val * contrast_val * edge_density_val) ** (1/3)) if sharpness_val * contrast_val * edge_density_val > 0 else 0.0  # Geometric mean
         }
         
         return metrics
@@ -453,24 +459,3 @@ class ZoomInOperation(BaseOperation):
         }
 
 
-# Register the operation with the global registry
-registry.register(
-    'ZOOM_IN',
-    ZoomInOperation,
-    metadata={
-        'description': 'Zoom into a specific region of an image',
-        'category': 'transformation',
-        'input_types': {
-            'image': 'torch.Tensor or numpy.ndarray',
-            'center': 'Optional[Tuple[int, int]]',
-            'zoom_factor': 'Optional[float]',
-            'region': 'Optional[List[int]]'
-        },
-        'output_types': {
-            'zoomed_image': 'torch.Tensor',
-            'region': 'List[int]',
-            'zoom_level': 'float',
-            'metadata': 'Dict'
-        }
-    }
-)

@@ -64,6 +64,7 @@ class ExperienceBuffer:
         self.persistence_path = Path(persistence_path)
         self.retention_days = retention_days
         self.enable_auto_pruning = enable_auto_pruning
+        self.stop_pruning_event = threading.Event()  # Proper event for thread shutdown
         
         # Core data structure - deque for automatic size management
         self.buffer = deque(maxlen=max_size)
@@ -177,7 +178,7 @@ class ExperienceBuffer:
                 return True
                 
             except Exception as e:
-                logger.error(f"Error adding experience: {e}")
+                logger.error(f"Failed to add experience: {e}")
                 return False
     
     def _add_to_index(self, experience: Experience):
@@ -684,16 +685,16 @@ class ExperienceBuffer:
         
         def pruning_worker():
             """Background worker for periodic pruning."""
-            while self.enable_auto_pruning:
+            while not self.stop_pruning_event.is_set():
                 try:
                     # Sleep for 24 hours (86400 seconds)
-                    # Check every hour if shutdown is requested
-                    for _ in range(24):
-                        if not self.enable_auto_pruning:
+                    # Check every minute if shutdown is requested for faster response
+                    for _ in range(24 * 60):  # 24 hours in minutes
+                        if self.stop_pruning_event.is_set():
                             break
-                        time.sleep(3600)  # Sleep 1 hour
+                        time.sleep(60)  # Sleep 1 minute
                     
-                    if self.enable_auto_pruning:
+                    if not self.stop_pruning_event.is_set():
                         # Run pruning
                         pruned = self.prune_old_experiences()
                         
@@ -703,7 +704,11 @@ class ExperienceBuffer:
                             
                 except Exception as e:
                     logger.error(f"Error in pruning worker: {e}")
-                    time.sleep(3600)  # Wait an hour before retrying
+                    # Wait with checking for shutdown
+                    for _ in range(60):  # Wait an hour total, checking every minute
+                        if self.stop_pruning_event.is_set():
+                            break
+                        time.sleep(60)
         
         # Start background thread
         self.pruning_thread = threading.Thread(
@@ -769,11 +774,14 @@ class ExperienceBuffer:
     def shutdown(self):
         """Gracefully shutdown the buffer."""
         # Stop pruning task
-        if self.enable_auto_pruning:
-            self.enable_auto_pruning = False
-            if self.pruning_thread and self.pruning_thread.is_alive():
-                logger.info("Waiting for pruning task to complete...")
-                self.pruning_thread.join(timeout=5)
+        if self.pruning_thread and self.pruning_thread.is_alive():
+            self.stop_pruning_event.set()
+            logger.info("Waiting for pruning task to complete...")
+            # Join the thread to ensure it has fully exited before the test ends
+            self.pruning_thread.join(timeout=2.0)
+        
+        # Ensure auto pruning is disabled
+        self.enable_auto_pruning = False
         
         # Save final checkpoint
         if self.enable_persistence:

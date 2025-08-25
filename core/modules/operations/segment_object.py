@@ -7,8 +7,9 @@ Implements the SEGMENT_OBJECT_AT visual operation for pixel-level object segment
 import torch
 import numpy as np
 from typing import Dict, Any, Tuple, Optional, List
-from ..operation_registry import BaseOperation, registry
+from ..operation_registry import BaseOperation, registry, register_operation
 
+@register_operation("SEGMENT_OBJECT_AT")
 class SegmentObjectOperation(BaseOperation):
     """
     Segments an object at a specified pixel location in an image.
@@ -262,25 +263,3 @@ class SegmentObjectOperation(BaseOperation):
             'threshold': 0.5,
             'return_scores': False
         }
-
-
-# Register the operation with the global registry
-registry.register(
-    'SEGMENT_OBJECT_AT',
-    SegmentObjectOperation,
-    metadata={
-        'description': 'Segment an object at a specified pixel location',
-        'category': 'segmentation',
-        'input_types': {
-            'image': 'torch.Tensor or numpy.ndarray',
-            'point': 'Tuple[int, int]'
-        },
-        'output_types': {
-            'mask': 'torch.Tensor',
-            'bbox': 'List[int]',
-            'area': 'int',
-            'confidence': 'float',
-            'object_id': 'str'
-        }
-    }
-)

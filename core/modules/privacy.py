@@ -90,21 +90,30 @@ class PIIRedactor:
                 risk_level="high"
             ),
             
-            # Phone numbers (various formats)
-            RedactionPattern(
-                name="phone",
-                pattern=r'(\+\d{1,3}[-.\s]?)?\(?\d{1,4}\)?[-.\s]?\d{1,4}[-.\s]?\d{1,9}',
-                replacement="PHONE",
-                description="Phone numbers",
-                risk_level="high"
-            ),
-            
-            # Social Security Numbers (US)
+            # Social Security Numbers (US) - MUST come before phone pattern
             RedactionPattern(
                 name="ssn",
                 pattern=r'\b\d{3}-\d{2}-\d{4}\b|\b\d{9}\b',
                 replacement="SSN",
                 description="Social Security Numbers",
+                risk_level="high"
+            ),
+            
+            # IP addresses (IPv4 and IPv6) - MUST come before phone pattern
+            RedactionPattern(
+                name="ip_address",
+                pattern=r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b|(?:[A-F0-9]{1,4}:){7}[A-F0-9]{1,4}',
+                replacement="IP_ADDRESS",
+                description="IP addresses",
+                risk_level="medium"
+            ),
+            
+            # Phone numbers (various formats) - balanced pattern to avoid false positives
+            RedactionPattern(
+                name="phone",
+                pattern=r'(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3,4}[-.\s]?\d{4}\b|\d{3}[-.\s]\d{4}\b',
+                replacement="PHONE",
+                description="Phone numbers",
                 risk_level="high"
             ),
             
@@ -115,15 +124,6 @@ class PIIRedactor:
                 replacement="CREDIT_CARD",
                 description="Credit card numbers",
                 risk_level="high"
-            ),
-            
-            # IP addresses (IPv4 and IPv6)
-            RedactionPattern(
-                name="ip_address",
-                pattern=r'\b(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\b|(?:[A-F0-9]{1,4}:){7}[A-F0-9]{1,4}',
-                replacement="IP_ADDRESS",
-                description="IP addresses",
-                risk_level="medium"
             ),
             
             # MAC addresses

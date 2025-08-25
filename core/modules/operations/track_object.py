@@ -7,9 +7,10 @@ Implements the TRACK_OBJECT visual operation for object tracking in videos.
 import torch
 import numpy as np
 from typing import Dict, Any, List, Optional, Tuple, Union
-from ..operation_registry import BaseOperation, registry
+from ..operation_registry import BaseOperation, registry, register_operation
 
 
+@register_operation("TRACK_OBJECT")
 class TrackObjectOperation(BaseOperation):
     """
     Tracks an object across multiple frames in a video sequence.
@@ -515,26 +516,3 @@ class TrackObjectOperation(BaseOperation):
         }
 
 
-# Register the operation with the global registry
-registry.register(
-    'TRACK_OBJECT',
-    TrackObjectOperation,
-    metadata={
-        'description': 'Track an object across video frames',
-        'category': 'tracking',
-        'input_types': {
-            'frames': 'List[torch.Tensor] or torch.Tensor',
-            'init_mask': 'Optional[torch.Tensor]',
-            'init_bbox': 'Optional[List[int]]',
-            'track_id': 'Optional[str]'
-        },
-        'output_types': {
-            'track_id': 'str',
-            'trajectory': 'List[List[int]]',
-            'masks': 'Optional[List[torch.Tensor]]',
-            'confidences': 'List[float]',
-            'status': 'str',
-            'statistics': 'Dict'
-        }
-    }
-)

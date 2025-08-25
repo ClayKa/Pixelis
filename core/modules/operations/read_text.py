@@ -7,9 +7,10 @@ Implements the READ_TEXT visual operation for optical character recognition (OCR
 import torch
 import numpy as np
 from typing import Dict, Any, List, Optional, Tuple
-from ..operation_registry import BaseOperation, registry
+from ..operation_registry import BaseOperation, registry, register_operation
 
 
+@register_operation("READ_TEXT")
 class ReadTextOperation(BaseOperation):
     """
     Reads and extracts text from a specified region in an image.
@@ -271,24 +272,3 @@ class ReadTextOperation(BaseOperation):
             'return_boxes': True
         }
 
-
-# Register the operation with the global registry
-registry.register(
-    'READ_TEXT',
-    ReadTextOperation,
-    metadata={
-        'description': 'Extract text from an image or image region using OCR',
-        'category': 'text_extraction',
-        'input_types': {
-            'image': 'torch.Tensor or numpy.ndarray',
-            'region': 'Optional[List[int]]',
-            'language': 'str'
-        },
-        'output_types': {
-            'text': 'str',
-            'lines': 'List[str]',
-            'words': 'List[Dict]',
-            'confidence': 'float'
-        }
-    }
-)

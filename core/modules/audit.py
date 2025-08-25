@@ -286,6 +286,10 @@ class AuditLogger:
             entry: Audit entry to write
         """
         try:
+            # CRITICAL FIX: Ensure directory exists before writing
+            log_dir = os.path.dirname(str(self.current_file_path))
+            os.makedirs(log_dir, exist_ok=True)
+            
             # Check file size and rotate if needed
             if self.current_file_path.exists():
                 if self.current_file_path.stat().st_size > self.max_file_size:
@@ -339,8 +343,8 @@ class AuditLogger:
             # Remove uncompressed archive
             archive_path.unlink()
             
-            # Create new current file
-            self.current_file_path = self.audit_dir / f"audit_{datetime.now().strftime('%Y%m%d')}.jsonl"
+            # Create new current file with timestamp to ensure uniqueness
+            self.current_file_path = self.audit_dir / f"audit_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
             
             logger.info(f"Rotated audit file to {archive_name}.gz")
             
@@ -369,7 +373,8 @@ class AuditLogger:
             return {
                 'valid': False,
                 'error': 'File does not exist',
-                'file': str(file_path)
+                'file': str(file_path),
+                'errors': ['File does not exist']  # CRITICAL FIX: Add 'errors' key
             }
         
         results = {

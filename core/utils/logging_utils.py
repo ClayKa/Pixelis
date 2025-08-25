@@ -50,6 +50,7 @@ def setup_logging(
     # Determine format string
     if format_str is not None:
         log_format = format_str
+        _LOG_FORMAT = format_str  # Update global variable
     elif use_tracing:
         log_format = _LOG_FORMAT_WITH_TRACE
     else:

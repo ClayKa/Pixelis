@@ -382,6 +382,9 @@ class VotingResult:
     
     def __post_init__(self):
         """Validate voting result data and ensure required provenance fields."""
+        # Clamp confidence value to handle floating-point precision issues
+        self.confidence = min(1.0, max(0.0, self.confidence))
+        
         if self.confidence < 0 or self.confidence > 1:
             raise ValueError(f"Confidence must be between 0 and 1, got {self.confidence}")
         

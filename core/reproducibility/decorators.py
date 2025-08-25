@@ -514,13 +514,19 @@ def _serialize_arg(arg: Any, max_depth: int = 3, current_depth: int = 0) -> Any:
     
     # Handle torch tensors
     if TORCH_AVAILABLE and torch is not None:
-        if isinstance(arg, torch.Tensor):
-            return {
-                "type": "torch.Tensor",
-                "shape": list(arg.shape),
-                "dtype": str(arg.dtype),
-                "device": str(arg.device),
-            }
+        # CRITICAL FIX: Check if torch.Tensor is a valid type before using it in isinstance
+        try:
+            tensor_type = getattr(torch, 'Tensor', None)
+            if tensor_type and isinstance(tensor_type, type) and isinstance(arg, tensor_type):
+                return {
+                    "type": "torch.Tensor",
+                    "shape": list(arg.shape),
+                    "dtype": str(arg.dtype),
+                    "device": str(arg.device),
+                }
+        except (TypeError, AttributeError):
+            # If torch.Tensor is mocked or not available, skip
+            pass
     
     # Handle objects with __dict__
     if hasattr(arg, "__dict__") and not inspect.isclass(arg):

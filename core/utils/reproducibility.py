@@ -46,6 +46,11 @@ def enable_deterministic_mode() -> None:
     
     Note: This can have a performance cost, but is essential for reproducibility.
     """
+    # Set CUBLAS configuration for deterministic behavior
+    # This is required for some CUDA operations when using deterministic algorithms
+    if 'CUBLAS_WORKSPACE_CONFIG' not in os.environ:
+        os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+    
     if torch.cuda.is_available():
         # Ensure deterministic behavior (reproducible results)
         torch.backends.cudnn.deterministic = True

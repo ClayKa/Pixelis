@@ -7,9 +7,10 @@ Implements the GET_PROPERTIES visual operation for extracting object properties.
 import torch
 import numpy as np
 from typing import Dict, Any, List, Optional, Union
-from ..operation_registry import BaseOperation, registry
+from ..operation_registry import BaseOperation, registry, register_operation
 
 
+@register_operation("GET_PROPERTIES")
 class GetPropertiesOperation(BaseOperation):
     """
     Extracts visual properties of an object or region in an image.
@@ -433,26 +434,3 @@ class GetPropertiesOperation(BaseOperation):
             'properties': 'all'  # Can be 'all' or list of specific properties
         }
 
-
-# Register the operation with the global registry
-registry.register(
-    'GET_PROPERTIES',
-    GetPropertiesOperation,
-    metadata={
-        'description': 'Extract visual properties of an object or region',
-        'category': 'analysis',
-        'input_types': {
-            'image': 'torch.Tensor or numpy.ndarray',
-            'mask': 'Optional[torch.Tensor]',
-            'bbox': 'Optional[List[int]]'
-        },
-        'output_types': {
-            'color': 'Dict',
-            'texture': 'Dict',
-            'shape': 'Dict',
-            'size': 'Dict',
-            'position': 'Dict',
-            'appearance': 'Dict'
-        }
-    }
-)

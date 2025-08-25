@@ -207,14 +207,14 @@ class PyAVExtractor(FrameExtractorBase):
             # Configure stream for better seeking
             stream.codec_context.skip_frame = 'NONKEY'
             
-            frames = []
+            frames_dict = {}  # Track frame_index -> frame mapping
             frame_indices_set = set(frame_indices)
             
             for frame_idx, frame in enumerate(container.decode(stream)):
                 if frame_idx in frame_indices_set:
                     # Convert to RGB numpy array
                     img = frame.to_ndarray(format='rgb24')
-                    frames.append(img)
+                    frames_dict[frame_idx] = img
                     
                     # Remove from set to track completion
                     frame_indices_set.remove(frame_idx)
@@ -223,15 +223,11 @@ class PyAVExtractor(FrameExtractorBase):
                     if not frame_indices_set:
                         break
             
-            if not frames:
+            if not frames_dict:
                 raise RuntimeError(f"No frames could be extracted from {video_path}")
             
-            # Sort frames back to requested order
-            frame_dict = dict(zip(
-                [idx for idx in frame_indices if idx < len(frames)], 
-                frames
-            ))
-            sorted_frames = [frame_dict[idx] for idx in sorted(frame_dict.keys())]
+            # Return frames in the order requested
+            sorted_frames = [frames_dict[idx] for idx in frame_indices if idx in frames_dict]
             
             return np.array(sorted_frames)
             

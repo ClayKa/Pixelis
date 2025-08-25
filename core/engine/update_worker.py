@@ -672,6 +672,9 @@ class UpdateWorker:
             temp_path = self.model_save_path / f"ema_model_snapshot.{version_str}.pt.tmp"
             final_path = self.model_save_path / f"ema_model_snapshot.{version_str}.pt"
             
+            # Ensure the parent directory exists before saving
+            temp_path.parent.mkdir(parents=True, exist_ok=True)
+            
             # Save to temporary file
             torch.save({
                 'model_state_dict': self.ema_model.state_dict(),
@@ -862,17 +865,24 @@ class UpdateWorker:
         try:
             # Save final EMA snapshot
             if self.use_ema:
-                self._save_ema_snapshot()
+                try:
+                    self._save_ema_snapshot()
+                except (FileNotFoundError, RuntimeError) as e:
+                    logger.warning(f"Could not save EMA snapshot during shutdown, directory may be gone: {e}")
             
             # Save final statistics
-            stats_path = self.model_save_path / "final_stats.json"
-            with open(stats_path, 'w') as f:
-                json.dump({
-                    'stats': self.stats,
-                    'kl_config': self.kl_config.__dict__,
-                    'final_beta': self.current_beta,
-                    'timestamp': datetime.now().isoformat()
-                }, f, indent=2)
+            try:
+                stats_path = self.model_save_path / "final_stats.json"
+                stats_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(stats_path, 'w') as f:
+                    json.dump({
+                        'stats': self.stats,
+                        'kl_config': self.kl_config.__dict__,
+                        'final_beta': self.current_beta,
+                        'timestamp': datetime.now().isoformat()
+                    }, f, indent=2)
+            except (FileNotFoundError, RuntimeError) as e:
+                logger.warning(f"Could not write final stats during shutdown, directory may be gone: {e}")
             
             # Log shutdown to audit trail
             self.audit_logger.log(
@@ -892,10 +902,14 @@ class UpdateWorker:
             
             # Verify audit log integrity before shutdown
             verification_result = self.audit_logger.verify_integrity()
-            if not verification_result['valid']:
-                logger.error(f"Audit log integrity check failed: {verification_result['errors']}")
+            if not verification_result.get('valid', False):
+                # Use .get() to prevent KeyError - CRITICAL FIX
+                error_details = verification_result.get('errors', ['Unknown integrity error'])
+                logger.error(f"Audit log integrity check failed: {error_details}")
             else:
-                logger.info(f"Audit log integrity verified: {verification_result['total_entries']} entries")
+                # Use .get() for safety
+                total_entries = verification_result.get('total_entries', 0)
+                logger.info(f"Audit log integrity verified: {total_entries} entries")
             
             # Shutdown audit logger
             self.audit_logger.shutdown()
