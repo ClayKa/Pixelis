@@ -65,9 +65,9 @@ class TestBaseLoaderValidation:
         with pytest.raises(ValueError, match="Loader configuration must include a 'name' key"):
             ValidLoader(config_without_name)
     
-    @patch('builtins.print')
-    def test_successful_initialization_prints_message(self, mock_print):
-        """Test that successful initialization prints a status message."""
+    @patch('core.dataloaders.base_loader.logger')
+    def test_successful_initialization_prints_message(self, mock_logger):
+        """Test that successful initialization logs a status message."""
         
         class ValidLoader(BaseLoader):
             def _build_index(self) -> List[Any]:
@@ -79,9 +79,9 @@ class TestBaseLoaderValidation:
         config = {"name": "test_dataset"}
         loader = ValidLoader(config)
         
-        # Check that initialization message was printed
-        mock_print.assert_called_once_with(
-            "✅ Loader for 'test_dataset' initialized successfully. Found 3 samples."
+        # Check that initialization message was logged
+        mock_logger.info.assert_called_once_with(
+            "Loader for 'test_dataset' initialized successfully. Found 3 samples."
         )
         
         # Check that attributes are set correctly
@@ -104,7 +104,7 @@ class TestStandardizedBaseHelper:
                 return {}
         
         config = {"name": "test_dataset"}
-        with patch('builtins.print'):  # Suppress initialization print
+        with patch('core.dataloaders.base_loader.logger'):  # Suppress initialization log
             self.loader = ValidLoader(config)
     
     def test_standardized_base_with_valid_image_file(self):
@@ -128,6 +128,8 @@ class TestStandardizedBaseHelper:
                 "sample_id": "test_123",
                 "media_type": "image",
                 "media_path": str(temp_path.resolve()),
+                "width": None,  # None because temp file is not a valid image
+                "height": None,  # None because temp file is not a valid image
                 "annotations": {}
             }
             
@@ -158,10 +160,44 @@ class TestStandardizedBaseHelper:
                 "sample_id": "video_456",
                 "media_type": "video",
                 "media_path": str(temp_path.resolve()),
+                "width": None,  # None for videos (not implemented yet)
+                "height": None,  # None for videos (not implemented yet)
                 "annotations": {}
             }
             
             assert result == expected_structure
+            
+        finally:
+            # Clean up the temporary file
+            temp_path.unlink(missing_ok=True)
+    
+    def test_standardized_base_with_real_image_file(self):
+        """Test _get_standardized_base with a real image file to verify dimension extraction."""
+        from PIL import Image
+        
+        # Create a real image file with known dimensions
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
+            temp_path = Path(temp_file.name)
+            # Create a simple 100x50 image
+            img = Image.new('RGB', (100, 50), color='red')
+            img.save(temp_path)
+            
+        try:
+            # Call _get_standardized_base with the real image
+            result = self.loader._get_standardized_base(
+                sample_id="test_real_img",
+                media_path=temp_path,
+                media_type="image"
+            )
+            
+            # Verify the structure and contents including dimensions
+            assert result["source_dataset"] == "test_dataset"
+            assert result["sample_id"] == "test_real_img"
+            assert result["media_type"] == "image"
+            assert result["media_path"] == str(temp_path.resolve())
+            assert result["width"] == 100  # Actual width from the image
+            assert result["height"] == 50  # Actual height from the image
+            assert result["annotations"] == {}
             
         finally:
             # Clean up the temporary file

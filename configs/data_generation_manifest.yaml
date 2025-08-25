@@ -40,6 +40,63 @@ datasources:
   starqa_subset:
     path: "/path/to/your/starqa_subset" # <-- CHANGEME
     type: "AnnotatedVideo"
+  
+  # ActivityNet Captions dataset for dense video captioning
+  activitynet_captions_train:
+    name: "activitynet_captions_train"
+    type: "DenseVideoCaptioning"
+    path: "/path/to/activitynet_captions/videos/" # <-- CHANGEME: Directory containing .mp4/.mkv video files
+    annotation_file: "/path/to/activitynet_captions/annotations/activitynet_captions_train.json" # <-- CHANGEME
+  
+  activitynet_captions_val1:
+    name: "activitynet_captions_val1"
+    type: "DenseVideoCaptioning"
+    path: "/path/to/activitynet_captions/videos/" # <-- CHANGEME: Same video directory as train
+    annotation_file: "/path/to/activitynet_captions/annotations/activitynet_captions_val1.json" # <-- CHANGEME
+  
+  activitynet_captions_val2:
+    name: "activitynet_captions_val2"
+    type: "DenseVideoCaptioning"
+    path: "/path/to/activitynet_captions/videos/" # <-- CHANGEME: Same video directory as train
+    annotation_file: "/path/to/activitynet_captions/annotations/activitynet_captions_val2.json" # <-- CHANGEME
+  
+  # DiDeMo dataset for video moment retrieval
+  didemo_train:
+    name: "didemo_train"
+    type: "VideoMomentRetrieval"
+    path: "/path/to/didemo/videos/" # <-- CHANGEME: Directory containing video files
+    annotation_file: "/path/to/didemo/annotations/didemo_train.json" # <-- CHANGEME
+  
+  didemo_val:
+    name: "didemo_val"
+    type: "VideoMomentRetrieval"
+    path: "/path/to/didemo/videos/" # <-- CHANGEME: Same video directory as train
+    annotation_file: "/path/to/didemo/annotations/didemo_val.json" # <-- CHANGEME
+  
+  didemo_test:
+    name: "didemo_test"
+    type: "VideoMomentRetrieval"
+    path: "/path/to/didemo/videos/" # <-- CHANGEME: Same video directory as train
+    annotation_file: "/path/to/didemo/annotations/didemo_test.json" # <-- CHANGEME
+  
+  # Assembly101 dataset for fine-grained action segmentation
+  assembly101_train:
+    name: "assembly101_train"
+    type: "TimedActionVideo"
+    path: "/path/to/assembly101/videos/" # <-- CHANGEME: Directory containing video subdirectories
+    annotation_file: "/path/to/assembly101/annotations/train.csv" # <-- CHANGEME
+  
+  assembly101_val:
+    name: "assembly101_val"
+    type: "TimedActionVideo"
+    path: "/path/to/assembly101/videos/" # <-- CHANGEME: Same video directory as train
+    annotation_file: "/path/to/assembly101/annotations/validation.csv" # <-- CHANGEME
+  
+  assembly101_test:
+    name: "assembly101_test"
+    type: "TimedActionVideo"
+    path: "/path/to/assembly101/videos/" # <-- CHANGEME: Same video directory as train
+    annotation_file: "/path/to/assembly101/annotations/test.csv" # <-- CHANGEME
 
 # ----------------------------------------------------
 # Section 2: Task Generation Recipes

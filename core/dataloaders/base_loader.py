@@ -1,8 +1,12 @@
 # core/dataloaders/base_loader.py
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 from pathlib import Path
+from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 class BaseLoader(ABC):
     """
@@ -34,7 +38,7 @@ class BaseLoader(ABC):
         # It is responsible for populating `self._index` with a lightweight list
         # of "pointers" to the individual samples within the dataset.
         self._index: List[Any] = self._build_index()
-        print(f"✅ Loader for '{self.source_name}' initialized successfully. Found {len(self)} samples.")
+        logger.info(f"Loader for '{self.source_name}' initialized successfully. Found {len(self)} samples.")
 
     @abstractmethod
     def _build_index(self) -> List[Any]:
@@ -109,11 +113,31 @@ class BaseLoader(ABC):
         
         if media_type not in ["image", "video"]:
             raise ValueError(f"media_type must be 'image' or 'video', but got '{media_type}'.")
+        
+        width, height = None, None
+        
+        # Extract dimensions based on media type
+        if media_type == "image":
+            try:
+                with Image.open(media_path) as img:
+                    width, height = img.size
+            except Exception as e:
+                # Log a warning if dimensions cannot be read, but don't crash
+                logger.warning(
+                    f"Could not read dimensions for image '{media_path.name}' "
+                    f"in source '{self.source_name}'. Error: {e}"
+                )
+        elif media_type == "video":
+            # Placeholder for future video dimension extraction logic (e.g., using OpenCV)
+            # For now, we can leave them as None.
+            pass
             
         return {
             "source_dataset": self.source_name,
             "sample_id": sample_id,
             "media_type": media_type,
             "media_path": str(media_path.resolve()),  # Always use absolute paths for consistency
+            "width": width,   # NEW: image/video width
+            "height": height, # NEW: image/video height
             "annotations": {}  # Initialize an empty dict for annotations
         }
