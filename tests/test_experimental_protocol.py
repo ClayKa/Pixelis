@@ -107,7 +107,7 @@ class TestExperimentalProtocol(unittest.TestCase):
             experiment_name="Model A",
             metrics_mean={"accuracy": 0.85},
             metrics_std={"accuracy": 0.02},
-            metrics_raw={"accuracy": [0.83, 0.85, 0.87]},
+            metrics_raw={"accuracy": [0.832, 0.849, 0.871]},
             num_seeds=3,
             seeds=[42, 84, 126]
         )
@@ -117,7 +117,7 @@ class TestExperimentalProtocol(unittest.TestCase):
             experiment_name="Model B",
             metrics_mean={"accuracy": 0.80},
             metrics_std={"accuracy": 0.02},
-            metrics_raw={"accuracy": [0.78, 0.80, 0.82]},
+            metrics_raw={"accuracy": [0.779, 0.801, 0.818]},
             num_seeds=3,
             seeds=[42, 84, 126]
         )
@@ -245,50 +245,55 @@ class TestExperimentalProtocol(unittest.TestCase):
     
     def test_comparison_table_generation(self):
         """Test generation of comparison tables"""
-        # Create mock experiment results
-        with patch.object(self.analyzer, 'load_local_results') as mock_load:
-            # Mock two experiments
-            mock_load.side_effect = [
-                [
-                    ExperimentResult("baseline", 42, {"accuracy": 0.80, "f1": 0.78}),
-                    ExperimentResult("baseline", 84, {"accuracy": 0.79, "f1": 0.77}),
-                    ExperimentResult("baseline", 126, {"accuracy": 0.81, "f1": 0.79})
-                ],
-                [
-                    ExperimentResult("improved", 42, {"accuracy": 0.85, "f1": 0.83}),
-                    ExperimentResult("improved", 84, {"accuracy": 0.84, "f1": 0.82}),
-                    ExperimentResult("improved", 126, {"accuracy": 0.86, "f1": 0.84})
+        import warnings
+        # Suppress scipy warnings about zero variance in small samples
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", category=RuntimeWarning, module="scipy.stats")
+            
+            # Create mock experiment results
+            with patch.object(self.analyzer, 'load_local_results') as mock_load:
+                # Mock two experiments with more varied data to avoid precision warnings
+                mock_load.side_effect = [
+                    [
+                        ExperimentResult("baseline", 42, {"accuracy": 0.80, "f1": 0.75}),
+                        ExperimentResult("baseline", 84, {"accuracy": 0.795, "f1": 0.778}),
+                        ExperimentResult("baseline", 126, {"accuracy": 0.815, "f1": 0.802})
+                    ],
+                    [
+                        ExperimentResult("improved", 42, {"accuracy": 0.855, "f1": 0.825}),
+                        ExperimentResult("improved", 84, {"accuracy": 0.838, "f1": 0.818}),
+                        ExperimentResult("improved", 126, {"accuracy": 0.872, "f1": 0.851})
+                    ]
                 ]
-            ]
-            
-            # Generate markdown table
-            table = self.analyzer.generate_comparison_table(
-                ["baseline", "improved"],
-                ["accuracy", "f1"],
-                output_format="markdown"
-            )
-            
-            # Verify table contains expected elements
-            self.assertIn("baseline", table)
-            self.assertIn("improved", table)
-            self.assertIn("±", table)  # Should have std
-            
-            # Generate LaTeX table
-            mock_load.side_effect = [
-                [ExperimentResult("baseline", 42, {"accuracy": 0.80})],
-                [ExperimentResult("improved", 42, {"accuracy": 0.85})]
-            ]
-            
-            latex_table = self.analyzer.generate_comparison_table(
-                ["baseline", "improved"],
-                ["accuracy"],
-                output_format="latex"
-            )
-            
-            # Verify LaTeX formatting
-            self.assertIn("\\begin{table}", latex_table)
-            self.assertIn("\\toprule", latex_table)
-            self.assertIn("\\bottomrule", latex_table)
+                
+                # Generate markdown table
+                table = self.analyzer.generate_comparison_table(
+                    ["baseline", "improved"],
+                    ["accuracy", "f1"],
+                    output_format="markdown"
+                )
+                
+                # Verify table contains expected elements
+                self.assertIn("baseline", table)
+                self.assertIn("improved", table)
+                self.assertIn("±", table)  # Should have std
+                
+                # Generate LaTeX table
+                mock_load.side_effect = [
+                    [ExperimentResult("baseline", 42, {"accuracy": 0.80})],
+                    [ExperimentResult("improved", 42, {"accuracy": 0.85})]
+                ]
+                
+                latex_table = self.analyzer.generate_comparison_table(
+                    ["baseline", "improved"],
+                    ["accuracy"],
+                    output_format="latex"
+                )
+                
+                # Verify LaTeX formatting
+                self.assertIn("\\begin{table}", latex_table)
+                self.assertIn("\\toprule", latex_table)
+                self.assertIn("\\bottomrule", latex_table)
 
     def test_parallel_seed_execution(self):
         """Test parallel seed execution configuration and flow"""
@@ -350,9 +355,9 @@ class TestStatisticalMethods(unittest.TestCase):
     
     def test_paired_t_test(self):
         """Test paired t-test implementation"""
-        # Create paired samples
-        sample_a = [0.85, 0.83, 0.87, 0.84, 0.86]
-        sample_b = [0.80, 0.78, 0.82, 0.79, 0.81]
+        # Create paired samples with varied differences
+        sample_a = [0.852, 0.831, 0.869, 0.843, 0.858]
+        sample_b = [0.798, 0.782, 0.819, 0.791, 0.807]
         
         # Manual calculation
         differences = np.array(sample_a) - np.array(sample_b)

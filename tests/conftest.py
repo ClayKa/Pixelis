@@ -224,3 +224,12 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "gpu" in item.keywords and not has_gpu:
             item.add_marker(skip_gpu)
+
+@pytest.fixture(scope="session", autouse=True)
+def set_mkl_threading_layer():
+    """
+    Set the MKL_THREADING_LAYER environment variable for the entire test session.
+    This is a crucial fix to prevent crashes when using numpy/torch in
+    multiprocessing subprocesses, which was causing the last test failure.
+    """
+    os.environ['MKL_THREADING_LAYER'] = 'GNU'

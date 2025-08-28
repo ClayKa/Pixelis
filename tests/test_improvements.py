@@ -78,8 +78,6 @@ def test_reproducibility():
     assert 'generator' in dl_kwargs
     assert 'worker_init_fn' in dl_kwargs
     print("✓ Reproducible DataLoader kwargs generated")
-    
-    return True
 
 
 def test_curriculum_management():
@@ -115,8 +113,6 @@ def test_curriculum_management():
     print(f"  - Smoothing window: {curriculum_config.smoothing_window_size}")
     print(f"  - Patience cycles: {curriculum_config.patience_cycles}")
     print(f"  - Cooldown cycles: {curriculum_config.cooldown_cycles}")
-    
-    return True
 
 
 def test_distributed_tracing():
@@ -167,8 +163,6 @@ def test_distributed_tracing():
     with TracedOperation("test_log", "TestLogger") as op:
         logger.info("Test message with trace ID")
         print(f"✓ Logging with trace ID works")
-    
-    return True
 
 
 def main():
@@ -179,24 +173,20 @@ def main():
     
     try:
         # Run tests
-        reproducibility_ok = test_reproducibility()
-        curriculum_ok = test_curriculum_management()
-        tracing_ok = test_distributed_tracing()
+        test_reproducibility()
+        test_curriculum_management()
+        test_distributed_tracing()
         
         print("\n" + "=" * 60)
         print("Test Results Summary")
         print("=" * 60)
         
-        if reproducibility_ok and curriculum_ok and tracing_ok:
-            print("✅ All tests passed successfully!")
-            print("\nImprovements verified:")
-            print("1. ✓ Reproducibility features are working")
-            print("2. ✓ Curriculum management is enhanced")
-            print("3. ✓ Distributed tracing is functional")
-            return 0
-        else:
-            print("❌ Some tests failed")
-            return 1
+        print("✅ All tests passed successfully!")
+        print("\nImprovements verified:")
+        print("1. ✓ Reproducibility features are working")
+        print("2. ✓ Curriculum management is enhanced")
+        print("3. ✓ Distributed tracing is functional")
+        return 0
             
     except Exception as e:
         print(f"\n❌ Test failed with error: {e}")

@@ -466,7 +466,7 @@ class TestSVDArtifactPersistence(unittest.TestCase):
         self.assertTrue(weight_path.exists())
         
         # Load and verify
-        loaded_weights = torch.load(weight_path)
+        loaded_weights = torch.load(weight_path, weights_only=True)
         self.assertEqual(loaded_weights.shape, (256, 128))
         torch.testing.assert_close(loaded_weights, delta_weights)
 

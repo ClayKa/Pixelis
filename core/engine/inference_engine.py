@@ -89,7 +89,7 @@ class SharedMemoryManager:
         shm_name = f"pixelis_shm_{uuid.uuid4().hex}"
         
         # Create shared memory storage
-        storage = tensor.storage()._share_memory_()
+        storage = tensor.untyped_storage().share_memory_()
         
         # Cache the storage for cleanup
         self._shared_memory_cache[shm_name] = storage
@@ -691,7 +691,10 @@ class InferenceEngine:
         # Extract total reward tensor
         if isinstance(reward_dict, dict):
             total_reward = reward_dict.get('total_reward', 0.0)
-            reward_tensor = torch.tensor(total_reward, dtype=torch.float32)
+            if isinstance(total_reward, torch.Tensor):
+                reward_tensor = total_reward.clone().detach().to(dtype=torch.float32)
+            else:
+                reward_tensor = torch.tensor(total_reward, dtype=torch.float32)
         else:
             reward_tensor = torch.tensor(0.0, dtype=torch.float32)
         
@@ -1255,7 +1258,10 @@ class InferenceEngine:
         # Extract total reward tensor
         if isinstance(reward_dict, dict):
             total_reward = reward_dict.get('total_reward', 0.0)
-            reward_tensor = torch.tensor(total_reward, dtype=torch.float32)
+            if isinstance(total_reward, torch.Tensor):
+                reward_tensor = total_reward.clone().detach().to(dtype=torch.float32)
+            else:
+                reward_tensor = torch.tensor(total_reward, dtype=torch.float32)
         else:
             reward_tensor = torch.tensor(0.0, dtype=torch.float32)
         

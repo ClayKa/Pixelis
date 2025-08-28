@@ -94,7 +94,6 @@ def test_curriculum_dataset():
         assert "samples_by_difficulty" in stats
         
         print("✓ CurriculumDataset tests passed")
-        return True
 
 
 def test_curriculum_manager():
@@ -199,7 +198,6 @@ def test_curriculum_manager():
     assert "weights" in status
     
     print("✓ CurriculumManager tests passed")
-    return True
 
 
 def test_curriculum_callback():
@@ -249,7 +247,6 @@ def test_curriculum_callback():
     control = callback.on_evaluate(args, state, control, metrics)
     
     print("✓ CurriculumCallback tests passed")
-    return True
 
 
 def test_integration():
@@ -268,10 +265,9 @@ def test_integration():
         
         print("✓ All imports successful")
         print("✓ Integration test passed")
-        return True
     except ImportError as e:
         print(f"✗ Import error: {e}")
-        return False
+        assert False, f"Import error: {e}"
 
 
 def main():
@@ -292,8 +288,8 @@ def main():
         print(f"\n{name}:")
         print("-" * 40)
         try:
-            success = test_func()
-            results.append((name, success))
+            test_func()
+            results.append((name, True))
         except Exception as e:
             print(f"✗ Test failed with error: {e}")
             results.append((name, False))
