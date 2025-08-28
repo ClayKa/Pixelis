@@ -12,27 +12,26 @@ import torch
 import numpy as np
 from datetime import datetime
 
+# Import operations at module level to ensure registration
+import core.modules.operations
+from core.modules.operations import (
+    SegmentObjectOperation,
+    ReadTextOperation,
+    GetPropertiesOperation,
+    TrackObjectOperation,
+    ZoomInOperation
+)
+
 
 def test_visual_operations():
     """Test visual operations registry and execution."""
     print("\n=== Testing Visual Operations ===")
     
+    # Import operations to ensure they're registered
+    import core.modules.operations
     from core.modules.operation_registry import registry
     
     # Check registered operations
-    operations = registry.list_operations()
-    print(f"Registered operations: {list(operations.keys())}")
-    
-    # Import operations to trigger registration
-    from core.modules.operations import (
-        SegmentObjectOperation,
-        ReadTextOperation,
-        GetPropertiesOperation,
-        TrackObjectOperation,
-        ZoomInOperation
-    )
-    
-    # Check again after import
     operations = registry.list_operations()
     print(f"After import: {list(operations.keys())}")
     

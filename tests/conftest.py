@@ -41,6 +41,55 @@ def mock_wandb(mocker):
             pass
 
 @pytest.fixture(scope="session", autouse=True)
+def register_all_operations():
+    """
+    This global, autouse fixture is the definitive solution for registry errors.
+
+    It runs once for the entire test session before any tests are collected.
+    By explicitly importing each module that defines an operation, we guarantee
+    that its @registry.register decorator is executed, populating the
+    global registry for all subsequent tests.
+    """
+    # First, import the registry to ensure it exists
+    from core.modules.operation_registry import registry
+    
+    # Simply import the modules - decorators will run automatically
+    from core.modules.operations import read_text
+    from core.modules.operations import segment_object
+    from core.modules.operations import track_object
+    from core.modules.operations import zoom_in
+    from core.modules.operations import get_properties
+
+@pytest.fixture(autouse=True)
+def ensure_operations_registered():
+    """
+    Ensure operations are registered before each test.
+    
+    This is a safety measure in case any test clears the registry.
+    It runs before each test function.
+    """
+    from core.modules.operation_registry import registry
+    
+    # Check if operations are registered, if not, re-register them
+    if not registry.has_operation("READ_TEXT"):
+        # Re-import the modules to trigger registration
+        from core.modules.operations import read_text
+        from core.modules.operations import segment_object
+        from core.modules.operations import track_object
+        from core.modules.operations import zoom_in
+        from core.modules.operations import get_properties
+
+@pytest.fixture(scope="session", autouse=True)
+def set_cuda_determinism():
+    """
+    Set CUDA configuration for deterministic behavior.
+    
+    This is required when using torch.use_deterministic_algorithms(True)
+    to avoid RuntimeError with CuBLAS operations.
+    """
+    os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
+
+@pytest.fixture(scope="session", autouse=True)
 def set_multiprocessing_start_method():
     """
     Set the multiprocessing start method to 'spawn' for all tests.

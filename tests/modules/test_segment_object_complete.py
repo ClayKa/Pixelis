@@ -16,6 +16,9 @@ import sys
 sys.path.insert(0, '/Users/clayka7/Documents/Pixelis')
 
 from core.modules.operations.segment_object import SegmentObjectOperation
+from core.modules.operation_registry import registry
+# Ensure operation is registered
+import core.modules.operations
 
 
 class TestSegmentObjectOperation(unittest.TestCase):
@@ -383,6 +386,8 @@ class TestSegmentObjectOperation(unittest.TestCase):
 
     def test_registry_registration(self):
         """Test that the operation is properly registered - lines 268-286."""
+        # Import operations to ensure they're registered
+        import core.modules.operations
         from core.modules.operation_registry import registry
         
         # Check if SEGMENT_OBJECT_AT is registered

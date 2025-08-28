@@ -172,7 +172,7 @@ class TestAsyncCommunication:
     
     def _create_engine(self, model, experience_buffer, voting_module, reward_orchestrator, config):
         """Helper to create an engine and register it for cleanup."""
-        engine = self._create_engine(
+        engine = InferenceEngine(
             model=model,
             experience_buffer=experience_buffer,
             voting_module=voting_module,
@@ -452,7 +452,7 @@ class TestAsyncCommunication:
             engine.shm_manager.mark_cleaned(shm_name)
 
 
-class TestFaultTolerance:
+class TestFaultTolerance(TestAsyncCommunication):
     """Test fault tolerance and error recovery."""
     
     def test_watchdog_cleanup_on_timeout(self):

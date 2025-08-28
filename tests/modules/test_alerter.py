@@ -802,7 +802,8 @@ class TestMissingCoverageHealthMonitor(unittest.TestCase):
             # Check that queue-specific calls were made
             queue_calls = []
             for call in calls:
-                if len(call[0]) > 1 and 'queue:' in str(call[0][1]):
+                # Check if component keyword argument contains 'queue:'
+                if 'component' in call[1] and 'queue:' in str(call[1]['component']):
                     queue_calls.append(call)
             self.assertEqual(len(queue_calls), 2)
     

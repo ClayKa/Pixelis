@@ -13,6 +13,9 @@ import torch
 import numpy as np
 from unittest.mock import patch, MagicMock
 from core.modules.operations.track_object import TrackObjectOperation
+from core.modules.operation_registry import registry
+# Ensure operation is registered
+import core.modules.operations
 
 
 class TestTrackObjectOperation:
@@ -524,6 +527,8 @@ class TestTrackObjectOperation:
     
     def test_registry_integration(self):
         """Test operation is registered correctly."""
+        # Import operations to ensure they're registered
+        import core.modules.operations
         from core.modules.operation_registry import registry
         
         assert registry.has_operation('TRACK_OBJECT')

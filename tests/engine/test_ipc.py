@@ -63,20 +63,21 @@ def worker_process_tensor_transfer(
         cleanup_queue.put(shm_info.get('name'))
         
     except Exception as e:
+        # Print error for debugging
+        print(f"[WORKER CRASH] An error occurred: {e}")
+        import traceback
+        traceback.print_exc()
+        # Send error back to main process
         send_queue.put({'error': str(e), 'success': False})
 
 
 def echo_worker(input_queue, output_queue):
     """Simple echo worker for bidirectional communication test."""
     while True:
-        try:
-            msg = input_queue.get(timeout=1.0)
-            if msg is None:
-                break
-            output_queue.put(f"Echo: {msg}")
-        except Exception:
-            # Handle both mp.queues.Empty and queue.Empty
-            continue
+        msg = input_queue.get()
+        if msg is None:
+            break  # Critical: exit the loop when None is received
+        output_queue.put(f"Echo: {msg}")
 
 
 def error_worker(queue):
@@ -325,35 +326,44 @@ class TestProcessCommunication:
     
     def test_bidirectional_communication(self):
         """Test bidirectional communication between processes."""
+        # Use fork context if available for better coverage
+        try:
+            ctx = mp.get_context("fork")
+        except ValueError:
+            # Fork not available (e.g., Windows), use default
+            ctx = mp.get_context()
+        
         # Create queues
-        to_worker = mp.Queue()
-        from_worker = mp.Queue()
+        to_worker = ctx.Queue()
+        from_worker = ctx.Queue()
         
         # Start worker
-        worker = mp.Process(
+        worker = ctx.Process(
             target=echo_worker,
             args=(to_worker, from_worker)
         )
         worker.start()
         
-        # Send messages
+        # Send all messages first
         messages = ["Hello", "World", "Test"]
         for msg in messages:
             to_worker.put(msg)
         
-        # Get responses
-        responses = []
-        for _ in messages:
-            resp = from_worker.get(timeout=2.0)
-            responses.append(resp)
+        # Now, collect the results *before* shutting down the worker
+        responses = [from_worker.get(timeout=2.0) for _ in messages]
+        
+        # Finally, send the shutdown signal and join
+        to_worker.put(None)
+        worker.join(timeout=5.0)  # Increase timeout for slower systems
+        
+        # If still alive, try to terminate
+        if worker.is_alive():
+            worker.terminate()
+            worker.join(timeout=1.0)
         
         # Verify
         expected = [f"Echo: {msg}" for msg in messages]
         assert responses == expected
-        
-        # Shutdown
-        to_worker.put(None)
-        worker.join(timeout=5.0)
         if worker.is_alive():
             worker.terminate()
     

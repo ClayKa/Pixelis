@@ -663,6 +663,15 @@ class TestAuditLogger(unittest.TestCase):
         """Test integrity verification with exception."""
         logger = AuditLogger(audit_dir=str(self.audit_dir), enable_async=False)
         
+        # First create a file so it exists
+        logger.log(
+            event_type=AuditEventType.USER_ACTION,
+            actor="test_user",
+            action="test_action",
+            resource="test_resource",
+            result=AuditResult.SUCCESS
+        )
+        
         with patch('builtins.open', side_effect=Exception("Read error")):
             results = logger.verify_integrity()
             
@@ -923,14 +932,27 @@ class TestAuditLogger(unittest.TestCase):
         archives_dir = self.audit_dir / "archives"
         archives_dir.mkdir(exist_ok=True)
         
-        # Create file
-        test_file = archives_dir / "audit_test.jsonl.gz"
+        # Create file with old timestamp matching the glob pattern
+        test_file = archives_dir / "audit_2024_01_01.jsonl.gz"
         test_file.touch()
+        # Make file old enough to be deleted (older than retention period)
+        import time
+        old_time = time.time() - (366 * 24 * 60 * 60)  # 366 days ago (default retention is 365)
+        os.utime(test_file, (old_time, old_time))
         
+        # Mock pathlib.Path.unlink to raise an exception
         with patch('pathlib.Path.unlink', side_effect=Exception("Delete error")):
-            with patch('core.modules.audit.logger') as mock_logger:
+            with self.assertLogs('core.modules.audit', level='ERROR') as log:
                 logger.cleanup_old_logs()
-                mock_logger.error.assert_called()
+                # The actual log message includes the filename
+                log_output = str(log.output)
+                self.assertTrue(
+                    any("Error removing old audit file" in msg for msg in log.output),
+                    f"Expected 'Error removing old audit file' in logs, got: {log_output}"
+                )
+        
+        # Verify file still exists because delete failed
+        self.assertTrue(test_file.exists())
         
         logger.shutdown()
     

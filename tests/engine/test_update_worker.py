@@ -98,21 +98,53 @@ def test_config():
 
 @pytest.fixture
 def update_worker(dummy_model, update_queues, test_config):
-    """Create an update worker for testing."""
+    """Create an update worker for testing with proper cleanup."""
     update_queue, cleanup_queue = update_queues
+    worker_process = None
     
     with tempfile.TemporaryDirectory() as tmpdir:
-        test_config['model_save_path'] = tmpdir
-        
-        worker = UpdateWorker(
-            model=dummy_model,
-            update_queue=update_queue,
-            cleanup_confirmation_queue=cleanup_queue,
-            config=test_config,
-            model_save_path=tmpdir
-        )
-        
-        yield worker
+        try:
+            test_config['model_save_path'] = tmpdir
+            
+            worker = UpdateWorker(
+                model=dummy_model,
+                update_queue=update_queue,
+                cleanup_confirmation_queue=cleanup_queue,
+                config=test_config,
+                model_save_path=tmpdir
+            )
+            
+            # If this worker is run as a process (for integration tests)
+            # we need to track the process for proper cleanup
+            # Note: Most tests don't start a process, but we handle it if they do
+            
+            # Yield control to the test function
+            yield worker
+            
+        finally:
+            # This code is guaranteed to run after the test,
+            # but BEFORE the 'with' block exits and deletes the directory.
+            
+            # First, send shutdown signal if the worker has a run method active
+            if hasattr(worker, 'shutdown'):
+                try:
+                    worker.shutdown()
+                except Exception as e:
+                    logging.warning(f"Error during worker.shutdown(): {e}")
+            
+            # If worker was started as a process, ensure it's terminated
+            if worker_process and worker_process.is_alive():
+                logging.info("Terminating worker process...")
+                update_queue.put(None)  # Send shutdown signal
+                worker_process.join(timeout=5)  # Wait for graceful shutdown
+                if worker_process.is_alive():
+                    logging.warning("Worker process did not shut down gracefully. Terminating.")
+                    worker_process.terminate()
+                    worker_process.join(timeout=2)
+            
+            # Small delay to ensure file handles are released
+            import time
+            time.sleep(0.1)
 
 
 @pytest.fixture
@@ -582,60 +614,69 @@ class TestIntegration:
                 model_save_path=tmpdir
             )
             
-            # Create and enqueue tasks
-            tasks = []
-            for i in range(3):
-                experience = Experience(
-                    experience_id=f"exp-{i}",
-                    image_features=torch.randn(1, 512),
-                    question_text=f"Question {i}",
-                    trajectory=Trajectory(),
-                    model_confidence=0.7 + i * 0.1
-                )
+            try:
+                # Create and enqueue tasks
+                tasks = []
+                for i in range(3):
+                    experience = Experience(
+                        experience_id=f"exp-{i}",
+                        image_features=torch.randn(1, 512),
+                        question_text=f"Question {i}",
+                        trajectory=Trajectory(),
+                        model_confidence=0.7 + i * 0.1
+                    )
+                    
+                    task = UpdateTask(
+                        task_id=f"task-{i}",
+                        experience=experience,
+                        reward_tensor=torch.tensor(0.5 + i * 0.1),
+                        learning_rate=1e-5,
+                        original_logits=torch.randn(1, 10)
+                    )
+                    
+                    tasks.append(task)
+                    update_queue.put(task)
                 
-                task = UpdateTask(
-                    task_id=f"task-{i}",
-                    experience=experience,
-                    reward_tensor=torch.tensor(0.5 + i * 0.1),
-                    learning_rate=1e-5,
-                    original_logits=torch.randn(1, 10)
-                )
+                # --- NEW, MORE ROBUST MOCKING STRATEGY ---
                 
-                tasks.append(task)
-                update_queue.put(task)
-            
-            # --- NEW, MORE ROBUST MOCKING STRATEGY ---
-            
-            # Create a mock model that returns logits very close to original to minimize KL divergence
-            mock_model = MagicMock()
-            
-            # Track which task we're processing
-            task_index = 0
-            
-            # Configure the mock to return outputs with the required .loss and .logits attributes
-            def mock_model_call(*args, **kwargs):
-                nonlocal task_index
-                mock_output = MagicMock()
-                mock_output.loss = torch.tensor(0.1, requires_grad=True)  # Small loss that requires grad
-                # Return logits close to the current task's original to minimize KL divergence
-                mock_output.logits = tasks[task_index].original_logits + 1e-6
-                task_index += 1
-                return mock_output
-            
-            mock_model.side_effect = mock_model_call
-            
-            # Use patch.object to replace the worker's model
-            with patch.object(worker, 'model', mock_model), \
-                 patch.object(worker, '_log_update'):
-                # Process tasks
-                for _ in range(3):
-                    task = update_queue.get(timeout=1.0)
-                    worker._process_update(task)
-            
-            # Check statistics
-            # NOW, this assertion should pass because updates are no longer skipped.
-            assert worker.stats['total_updates'] == 3
-            assert worker.stats['successful_updates'] == 3
+                # Create a mock model that returns logits very close to original to minimize KL divergence
+                mock_model = MagicMock()
+                
+                # Track which task we're processing
+                task_index = 0
+                
+                # Configure the mock to return outputs with the required .loss and .logits attributes
+                def mock_model_call(*args, **kwargs):
+                    nonlocal task_index
+                    mock_output = MagicMock()
+                    mock_output.loss = torch.tensor(0.1, requires_grad=True)  # Small loss that requires grad
+                    # Return logits close to the current task's original to minimize KL divergence
+                    mock_output.logits = tasks[task_index].original_logits + 1e-6
+                    task_index += 1
+                    return mock_output
+                
+                mock_model.side_effect = mock_model_call
+                
+                # Use patch.object to replace the worker's model
+                with patch.object(worker, 'model', mock_model), \
+                     patch.object(worker, '_log_update'):
+                    # Process tasks
+                    for _ in range(3):
+                        task = update_queue.get(timeout=1.0)
+                        worker._process_update(task)
+                
+                # Check statistics
+                # NOW, this assertion should pass because updates are no longer skipped.
+                assert worker.stats['total_updates'] == 3
+                assert worker.stats['successful_updates'] == 3
+                
+            finally:
+                # Clean up worker before directory is deleted
+                if hasattr(worker, 'shutdown'):
+                    worker.shutdown()
+                # Small delay to ensure files are released
+                import time
+                time.sleep(0.1)
     
     @pytest.mark.slow
     def test_ema_synchronization(self, dummy_model, update_queues, test_config):
@@ -654,44 +695,53 @@ class TestIntegration:
                 model_save_path=tmpdir
             )
             
-            # Process multiple updates
-            for i in range(5):
-                experience = Experience(
-                    experience_id=f"exp-{i}",
-                    image_features=torch.randn(1, 512),
-                    question_text=f"Question {i}",
-                    trajectory=Trajectory(),
-                    model_confidence=0.8
-                )
+            try:
+                # Process multiple updates
+                for i in range(5):
+                    experience = Experience(
+                        experience_id=f"exp-{i}",
+                        image_features=torch.randn(1, 512),
+                        question_text=f"Question {i}",
+                        trajectory=Trajectory(),
+                        model_confidence=0.8
+                    )
+                    
+                    task = UpdateTask(
+                        task_id=f"task-{i}",
+                        experience=experience,
+                        reward_tensor=torch.tensor(0.6),
+                        learning_rate=1e-5,
+                        original_logits=torch.randn(1, 10)
+                    )
+                    
+                    # Apply the mocking strategy to avoid KL divergence check failure
+                    new_logits = task.original_logits + 1e-6
+                    mock_model = MagicMock()
+                    mock_output = MagicMock()
+                    mock_output.loss = torch.tensor(0.1, requires_grad=True)
+                    mock_output.logits = new_logits
+                    mock_model.return_value = mock_output
+                    
+                    with patch.object(worker, 'model', mock_model):
+                        # Mock the run method behavior
+                        worker._process_update(task)
+                    
+                    # Check for sync
+                    if worker.updates_since_sync >= worker.sync_frequency:
+                        worker._save_ema_snapshot()
+                        worker.updates_since_sync = 0
                 
-                task = UpdateTask(
-                    task_id=f"task-{i}",
-                    experience=experience,
-                    reward_tensor=torch.tensor(0.6),
-                    learning_rate=1e-5,
-                    original_logits=torch.randn(1, 10)
-                )
+                # Check that snapshots were created
+                snapshot_files = list(Path(tmpdir).glob("ema_model_snapshot.v*.pt"))
+                assert len(snapshot_files) >= 2  # Should have at least 2 snapshots
                 
-                # Apply the mocking strategy to avoid KL divergence check failure
-                new_logits = task.original_logits + 1e-6
-                mock_model = MagicMock()
-                mock_output = MagicMock()
-                mock_output.loss = torch.tensor(0.1, requires_grad=True)
-                mock_output.logits = new_logits
-                mock_model.return_value = mock_output
-                
-                with patch.object(worker, 'model', mock_model):
-                    # Mock the run method behavior
-                    worker._process_update(task)
-                
-                # Check for sync
-                if worker.updates_since_sync >= worker.sync_frequency:
-                    worker._save_ema_snapshot()
-                    worker.updates_since_sync = 0
-            
-            # Check that snapshots were created
-            snapshot_files = list(Path(tmpdir).glob("ema_model_snapshot.v*.pt"))
-            assert len(snapshot_files) >= 2  # Should have at least 2 snapshots
+            finally:
+                # Clean up worker before directory is deleted
+                if hasattr(worker, 'shutdown'):
+                    worker.shutdown()
+                # Small delay to ensure files are released
+                import time
+                time.sleep(0.1)
 
 
 class TestUpdateWorkerEdgeCases:
@@ -745,8 +795,16 @@ class TestUpdateWorkerEdgeCases:
                 model_save_path=tmpdir
             )
             
-            # Should create no optimizer
-            assert worker.optimizer is None
+            try:
+                # Should create no optimizer
+                assert worker.optimizer is None
+            finally:
+                # Clean up worker before directory is deleted
+                if hasattr(worker, 'shutdown'):
+                    worker.shutdown()
+                # Small delay to ensure files are released
+                import time
+                time.sleep(0.1)
     
     def test_create_optimizer_different_types(self, update_worker, test_config):
         """Test creating different optimizer types."""
@@ -1016,12 +1074,17 @@ class TestUpdateWorkerEdgeCases:
                 model_save_path=tmpdir
             )
             
-            # Should handle shutdown without EMA
-            worker.shutdown()
-            
-            # Verify final stats file was created
-            stats_file = Path(tmpdir) / "final_stats.json"
-            assert stats_file.exists()
+            try:
+                # Should handle shutdown without EMA
+                worker.shutdown()
+                
+                # Verify final stats file was created
+                stats_file = Path(tmpdir) / "final_stats.json"
+                assert stats_file.exists()
+            finally:
+                # Small delay to ensure files are released
+                import time
+                time.sleep(0.1)
     
     def test_shutdown_audit_integrity_failure(self, update_worker):
         """Test shutdown when audit integrity check fails."""

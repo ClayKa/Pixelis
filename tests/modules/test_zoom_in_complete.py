@@ -14,6 +14,9 @@ import torch.nn.functional as F
 import numpy as np
 from unittest.mock import patch, MagicMock
 from core.modules.operations.zoom_in import ZoomInOperation
+from core.modules.operation_registry import registry
+# Ensure operation is registered
+import core.modules.operations
 
 
 class TestZoomInOperation:
@@ -666,6 +669,8 @@ class TestZoomInOperation:
     
     def test_registry_integration(self):
         """Test operation is registered correctly."""
+        # Import operations to ensure they're registered
+        import core.modules.operations
         from core.modules.operation_registry import registry
         
         assert registry.has_operation('ZOOM_IN')

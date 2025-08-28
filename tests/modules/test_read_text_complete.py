@@ -15,6 +15,9 @@ import sys
 sys.path.insert(0, '/Users/clayka7/Documents/Pixelis')
 
 from core.modules.operations.read_text import ReadTextOperation
+from core.modules.operation_registry import registry
+# Ensure operation is registered
+import core.modules.operations
 
 
 class TestReadTextOperation(unittest.TestCase):
@@ -716,6 +719,8 @@ class TestReadTextOperation(unittest.TestCase):
 
     def test_registry_registration(self):
         """Test that the operation is properly registered - lines 276-294."""
+        # Import operations to ensure they're registered
+        import core.modules.operations
         from core.modules.operation_registry import registry
         
         # Check if READ_TEXT is registered

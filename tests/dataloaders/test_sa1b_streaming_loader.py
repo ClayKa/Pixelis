@@ -6,6 +6,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 import ijson
+import contextlib
 
 from core.dataloaders.sa1b_streaming_loader import (
     Sa1bStreamingLoader, 
@@ -19,6 +20,7 @@ class TestSa1bStreamingLoader:
     @pytest.fixture
     def create_test_dataset(self):
         """Create a test dataset with mock SA-1B structure."""
+        @contextlib.contextmanager
         def _create(num_images=10, num_annotations_per_image=5):
             with tempfile.TemporaryDirectory() as tmpdir:
                 base_path = Path(tmpdir)
@@ -108,6 +110,7 @@ class TestSa1bStreamingLoader:
             ann_file.write_text('{"images": [], "annotations": []}')
             
             config = {
+                'name': 'test_sa1b_loader',
                 'path': str(images_dir),
                 'annotation_file': str(ann_file)
             }
@@ -129,6 +132,7 @@ class TestSa1bStreamingLoader:
         """Test retrieving individual items."""
         with create_test_dataset(3, 2) as (base_path, images_dir, ann_file):
             config = {
+                'name': 'test_sa1b_loader',
                 'path': str(images_dir),
                 'annotation_file': str(ann_file)
             }
@@ -150,6 +154,7 @@ class TestSa1bStreamingLoader:
         """Test memory usage estimation."""
         with create_test_dataset(5, 3) as (base_path, images_dir, ann_file):
             config = {
+                'name': 'test_sa1b_loader',
                 'path': str(images_dir),
                 'annotation_file': str(ann_file)
             }
@@ -166,6 +171,7 @@ class TestSa1bStreamingLoader:
         """Test the segmentation-specific loader variant."""
         with create_test_dataset(2, 4) as (base_path, images_dir, ann_file):
             config = {
+                'name': 'test_sa1b_loader',
                 'path': str(images_dir),
                 'annotation_file': str(ann_file)
             }
@@ -200,6 +206,7 @@ class TestSa1bStreamingLoader:
                 f.write(']}')
             
             config = {
+                'name': 'test_sa1b_loader',
                 'path': str(images_dir),
                 'annotation_file': str(ann_file)
             }

@@ -65,17 +65,19 @@ class TestMissingCoverageVisualOperationRegistry(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        # Create a fresh registry instance for each test
-        # Clear the singleton instance to start fresh
-        VisualOperationRegistry._instance = None
-        self.registry = VisualOperationRegistry()
+        # Use the existing singleton instance
+        self.registry = registry  # Use the global registry instance
+        # Save the existing operations before test
+        self._saved_operations = dict(self.registry._operations)
+        self._saved_metadata = dict(self.registry._operation_metadata)
+        # Clear for a clean test
+        self.registry.clear()
     
     def tearDown(self):
         """Clean up after tests."""
-        # Clear registry for next test
-        if hasattr(self.registry, 'clear'):
-            self.registry.clear()
-        VisualOperationRegistry._instance = None
+        # Restore the original operations after test
+        self.registry._operations = self._saved_operations
+        self.registry._operation_metadata = self._saved_metadata
     
     def test_singleton_second_initialization_early_return(self):
         """Test line 84: return in __init__ when already initialized."""
@@ -220,19 +222,19 @@ class TestMissingCoverageDecorator(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        # Clear the singleton instance to start fresh
-        VisualOperationRegistry._instance = None
-        
-        # Import registry to ensure it's fresh
-        from core.modules.operation_registry import registry
-        self.registry = registry
-        self.registry.clear()  # Clear any existing operations
+        # Use the existing singleton instance
+        self.registry = registry  # Use the global registry instance
+        # Save the existing operations before test
+        self._saved_operations = dict(self.registry._operations)
+        self._saved_metadata = dict(self.registry._operation_metadata)
+        # Clear for a clean test
+        self.registry.clear()
     
     def tearDown(self):
         """Clean up after tests."""
-        if hasattr(self.registry, 'clear'):
-            self.registry.clear()
-        # Don't reset _instance here to avoid breaking other tests
+        # Restore the original operations after test
+        self.registry._operations = self._saved_operations
+        self.registry._operation_metadata = self._saved_metadata
     
     def test_register_operation_decorator_basic_usage(self):
         """Test the register_operation decorator functionality."""
@@ -298,14 +300,19 @@ class TestMissingCoverageEdgeCases(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        VisualOperationRegistry._instance = None
-        self.registry = VisualOperationRegistry()
+        # Use the existing singleton instance
+        self.registry = registry  # Use the global registry instance
+        # Save the existing operations before test
+        self._saved_operations = dict(self.registry._operations)
+        self._saved_metadata = dict(self.registry._operation_metadata)
+        # Clear for a clean test
+        self.registry.clear()
     
     def tearDown(self):
         """Clean up after tests."""
-        if hasattr(self.registry, 'clear'):
-            self.registry.clear()
-        VisualOperationRegistry._instance = None
+        # Restore the original operations after test
+        self.registry._operations = self._saved_operations
+        self.registry._operation_metadata = self._saved_metadata
     
     def test_register_with_provided_metadata(self):
         """Test registration with explicitly provided metadata."""
@@ -385,14 +392,19 @@ class TestMissingCoverageLogging(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures."""
-        VisualOperationRegistry._instance = None
-        self.registry = VisualOperationRegistry()
+        # Use the existing singleton instance
+        self.registry = registry  # Use the global registry instance
+        # Save the existing operations before test
+        self._saved_operations = dict(self.registry._operations)
+        self._saved_metadata = dict(self.registry._operation_metadata)
+        # Clear for a clean test
+        self.registry.clear()
     
     def tearDown(self):
         """Clean up after tests."""
-        if hasattr(self.registry, 'clear'):
-            self.registry.clear()
-        VisualOperationRegistry._instance = None
+        # Restore the original operations after test
+        self.registry._operations = self._saved_operations
+        self.registry._operation_metadata = self._saved_metadata
     
     @patch('core.modules.operation_registry.logger')
     def test_logging_during_operations(self, mock_logger):

@@ -286,7 +286,7 @@ class TestImageMetadataStripper(unittest.TestCase):
             from PIL import Image
             
             # Mock the PIL Image inside the function
-            with patch('core.modules.privacy.Image') as mock_image_module:
+            with patch('PIL.Image.open') as mock_image_open:
                 # Mock PIL Image
                 mock_img = MagicMock()
                 mock_img.mode = 'RGB'
@@ -299,22 +299,25 @@ class TestImageMetadataStripper(unittest.TestCase):
                 }
                 mock_img._getexif.return_value = mock_exif
                 
-                mock_image_module.open.return_value = mock_img
-                mock_image_module.new.return_value = MagicMock()
+                mock_image_open.return_value = mock_img
                 
-                image_data = b"fake_image_data"
-                
-                with patch('core.modules.privacy.logger') as mock_logger:
-                    result = self.stripper.strip_metadata(image_data, 'jpeg')
+                # Need to patch Image.new separately since it's a different function
+                with patch('PIL.Image.new') as mock_new:
+                    mock_new.return_value = MagicMock()
                     
-                    # Verify stats were updated
-                    self.assertEqual(self.stripper.stats['images_processed'], 1)
-                    self.assertEqual(self.stripper.stats['metadata_removed'], 1)
-                    self.assertEqual(self.stripper.stats['gps_removed'], 1)
+                    image_data = b"fake_image_data"
                     
-                    # Verify debug log
-                    mock_logger.debug.assert_called_once()
-                    self.assertIn("Stripped metadata", str(mock_logger.debug.call_args))
+                    with patch('core.modules.privacy.logger') as mock_logger:
+                        result = self.stripper.strip_metadata(image_data, 'jpeg')
+                        
+                        # Verify stats were updated
+                        self.assertEqual(self.stripper.stats['images_processed'], 1)
+                        self.assertEqual(self.stripper.stats['metadata_removed'], 1)
+                        self.assertEqual(self.stripper.stats['gps_removed'], 1)
+                        
+                        # Verify debug log
+                        mock_logger.debug.assert_called_once()
+                        self.assertIn("Stripped metadata", str(mock_logger.debug.call_args))
         except ImportError:
             # PIL not installed, test the ImportError handling instead
             with patch('core.modules.privacy.logger') as mock_logger:
@@ -328,18 +331,7 @@ class TestImageMetadataStripper(unittest.TestCase):
     
     def test_strip_metadata_pil_not_installed(self):
         """Test lines 475-477: PIL import error handling."""
-        # Save original Image module if it exists
-        import sys
-        original_image = sys.modules.get('PIL.Image')
-        original_pil = sys.modules.get('PIL')
-        
-        # Remove PIL from modules to simulate it not being installed
-        if 'PIL.Image' in sys.modules:
-            del sys.modules['PIL.Image']
-        if 'PIL' in sys.modules:
-            del sys.modules['PIL']
-        
-        try:
+        with patch('PIL.Image.open', side_effect=ImportError("PIL/Pillow not installed")):
             with patch('core.modules.privacy.logger') as mock_logger:
                 # Try to strip metadata, should fail to import PIL
                 image_data = b"fake_image_data"
@@ -349,17 +341,10 @@ class TestImageMetadataStripper(unittest.TestCase):
                 self.assertEqual(result, image_data)
                 mock_logger.error.assert_called_once()
                 self.assertIn("PIL/Pillow not installed", str(mock_logger.error.call_args))
-        finally:
-            # Restore original modules
-            if original_pil:
-                sys.modules['PIL'] = original_pil
-            if original_image:
-                sys.modules['PIL.Image'] = original_image
     
     def test_strip_metadata_general_exception(self):
         """Test lines 478-480: general exception handling."""
-        with patch('core.modules.privacy.Image') as mock_image_module:
-            mock_image_module.open.side_effect = Exception("Processing failed")
+        with patch('PIL.Image.open', side_effect=Exception("Processing failed")) as mock_open:
             
             with patch('core.modules.privacy.logger') as mock_logger:
                 image_data = b"fake_image_data"
@@ -376,7 +361,7 @@ class TestImageMetadataStripper(unittest.TestCase):
             from PIL import Image
             from PIL.ExifTags import TAGS, GPSTAGS
             
-            with patch('core.modules.privacy.Image') as mock_image_module:
+            with patch('PIL.Image.open') as mock_image_open:
                 # Mock image with EXIF
                 mock_img = MagicMock()
                 mock_exif = {
@@ -390,7 +375,7 @@ class TestImageMetadataStripper(unittest.TestCase):
                     }
                 }
                 mock_img._getexif.return_value = mock_exif
-                mock_image_module.open.return_value = mock_img
+                mock_image_open.return_value = mock_img
                 
                 metadata = self.stripper.analyze_metadata(b"fake_image_data")
                 
@@ -413,37 +398,19 @@ class TestImageMetadataStripper(unittest.TestCase):
     
     def test_analyze_metadata_pil_not_installed(self):
         """Test lines 536-537: PIL import error in analyze."""
-        # Save original modules
-        import sys
-        original_image = sys.modules.get('PIL.Image')
-        original_pil = sys.modules.get('PIL')
-        original_tags = sys.modules.get('PIL.ExifTags')
-        
-        # Remove PIL from modules
-        for mod in ['PIL.Image', 'PIL', 'PIL.ExifTags']:
-            if mod in sys.modules:
-                del sys.modules[mod]
-        
-        try:
+        with patch('PIL.Image.open', side_effect=ImportError("PIL/Pillow not installed")):
             metadata = self.stripper.analyze_metadata(b"fake_image_data")
             
             self.assertIn('error', metadata)
+            # The actual error message from the ImportError should be captured
             self.assertEqual(metadata['error'], 'PIL/Pillow not installed')
-        finally:
-            # Restore original modules
-            if original_pil:
-                sys.modules['PIL'] = original_pil
-            if original_image:
-                sys.modules['PIL.Image'] = original_image
-            if original_tags:
-                sys.modules['PIL.ExifTags'] = original_tags
     
     def test_analyze_metadata_general_exception(self):
         """Test lines 538-539: general exception in analyze."""
         try:
             from PIL import Image
-            with patch('core.modules.privacy.Image') as mock_image_module:
-                mock_image_module.open.side_effect = Exception("Analysis failed")
+            with patch('PIL.Image.open') as mock_image_open:
+                mock_image_open.side_effect = Exception("Analysis failed")
                 
                 metadata = self.stripper.analyze_metadata(b"fake_image_data")
                 

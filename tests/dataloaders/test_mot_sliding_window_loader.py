@@ -4,6 +4,7 @@ import pytest
 import tempfile
 from pathlib import Path
 import pandas as pd
+import contextlib
 
 from core.dataloaders.mot_sliding_window_loader import (
     MotSlidingWindowLoader,
@@ -17,6 +18,7 @@ class TestMotSlidingWindowLoader:
     @pytest.fixture
     def create_mot_dataset(self):
         """Create a mock MOT dataset structure."""
+        @contextlib.contextmanager
         def _create(num_sequences=2, frames_per_sequence=500):
             with tempfile.TemporaryDirectory() as tmpdir:
                 base_path = Path(tmpdir)
@@ -211,6 +213,7 @@ class TestMotSlidingWindowLoader:
         with create_mot_dataset(1, 100) as (base_path, sequences):
             # Test sliding window config
             config_sliding = {
+                'name': 'test_mot_sliding_window',  # CRITICAL FIX: Add missing 'name' key
                 'path': str(base_path),
                 'sampling_strategy': {
                     'type': 'sliding_window',
@@ -223,6 +226,7 @@ class TestMotSlidingWindowLoader:
             
             # Test full sequence config (default)
             config_full = {
+                'name': 'test_mot_full',  # CRITICAL FIX: Add missing 'name' key
                 'path': str(base_path),
                 'sampling_strategy': {
                     'type': 'full_sequence'

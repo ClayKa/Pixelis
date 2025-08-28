@@ -136,8 +136,15 @@ def test_curriculum_manager():
     assert manager.rollback_count == 0
     
     # Test advancement check
+    # Set up performance history to meet advancement criteria
+    manager.performance_history.extend([0.7, 0.75, 0.8])  # Above min_performance (0.6)
     manager.steps_since_advance = 60
     manager.steps_since_rollback = 101  # Must be > rollback_cooldown (100) to allow advancement
+    # Need to set patience_counter to meet the requirement
+    manager.patience_counter = manager.patience_cycles - 1  # Will be incremented to meet cycles
+    # Add accuracy metric history for _check_advancement_criteria
+    from collections import deque
+    manager.metric_history["accuracy"] = deque([0.7, 0.75, 0.8], maxlen=10)
     assert manager.should_attempt_advance(global_step=100) == True
     
     manager.steps_since_advance = 30

@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 
 # Import core modules
+# Import operations module first to ensure registration
+import core.modules.operations
 from core.modules.operation_registry import registry
 from core.modules.operations import *
 from core.data_structures import (
@@ -30,6 +32,9 @@ from core.modules.dynamics_model import CuriosityDynamicsModel
 def test_visual_operations():
     """Test visual operations registry and execution."""
     print("\n=== Testing Visual Operations ===")
+    
+    # Import operations to ensure they're registered
+    import core.modules.operations
     
     # Check registered operations
     operations = registry.list_operations()
