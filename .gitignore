@@ -137,3 +137,4 @@ coverage.xml
 htmlcov/
 .claude/agents
 hiertext_env/
+api.md

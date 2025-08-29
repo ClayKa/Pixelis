@@ -20,7 +20,7 @@ class TestInfographicsVqaLoader:
             'name': 'test_infographics_vqa',
             'image_path': '/fake/images/path',
             'annotation_file': '/fake/annotation_file.json',
-            'ocr_file': '/fake/ocr_file.json'
+            'ocr_path': '/fake/ocr/path'
         }
 
     @pytest.fixture
@@ -130,11 +130,11 @@ class TestInfographicsVqaLoader:
         with pytest.raises(ValueError, match="InfographicsVqaLoader config must include 'annotation_file'"):
             InfographicsVqaLoader(config_no_annotation)
             
-        # Test missing 'ocr_file'
+        # Test missing 'ocr_path'
         config_no_ocr = sample_config.copy()
-        del config_no_ocr['ocr_file']
+        del config_no_ocr['ocr_path']
         
-        with pytest.raises(ValueError, match="InfographicsVqaLoader config must include 'ocr_file'"):
+        with pytest.raises(ValueError, match="InfographicsVqaLoader config must include 'ocr_path'"):
             InfographicsVqaLoader(config_no_ocr)
 
     def test_init_nonexistent_paths(self, sample_config):
@@ -162,16 +162,21 @@ class TestInfographicsVqaLoader:
             with open(annotation_file, 'w', encoding='utf-8') as f:
                 json.dump(sample_qa_data, f)
                 
-            # Create OCR file
-            ocr_file = temp_path / "ocr_data.json"
-            with open(ocr_file, 'w', encoding='utf-8') as f:
-                json.dump(sample_ocr_data, f)
+            # Create OCR directory and files
+            ocr_dir = temp_path / "ocr"
+            ocr_dir.mkdir()
+            
+            # Create individual OCR files for each image
+            for image_id, ocr_content in sample_ocr_data.items():
+                ocr_file = ocr_dir / f"{image_id}.json"
+                with open(ocr_file, 'w', encoding='utf-8') as f:
+                    json.dump(ocr_content, f)
             
             # Update config with real paths
             config = sample_config.copy()
             config['image_path'] = str(images_dir)
             config['annotation_file'] = str(annotation_file)
-            config['ocr_file'] = str(ocr_file)
+            config['ocr_path'] = str(ocr_dir)
             
             # Initialize loader
             loader = InfographicsVqaLoader(config)
@@ -197,16 +202,21 @@ class TestInfographicsVqaLoader:
             with open(annotation_file, 'w', encoding='utf-8') as f:
                 json.dump(invalid_qa_data, f)
                 
-            # Create OCR file
-            ocr_file = temp_path / "ocr_data.json" 
-            with open(ocr_file, 'w', encoding='utf-8') as f:
-                json.dump(sample_ocr_data, f)
+            # Create OCR directory and files
+            ocr_dir = temp_path / "ocr"
+            ocr_dir.mkdir()
+            
+            # Create individual OCR files for each image
+            for image_id, ocr_content in sample_ocr_data.items():
+                ocr_file = ocr_dir / f"{image_id}.json"
+                with open(ocr_file, 'w', encoding='utf-8') as f:
+                    json.dump(ocr_content, f)
             
             # Update config
             config = sample_config.copy()
             config['image_path'] = str(images_dir)
             config['annotation_file'] = str(annotation_file)
-            config['ocr_file'] = str(ocr_file)
+            config['ocr_path'] = str(ocr_dir)
             
             with pytest.raises(ValueError, match="missing 'data' field"):
                 InfographicsVqaLoader(config)
@@ -230,16 +240,21 @@ class TestInfographicsVqaLoader:
             with open(annotation_file, 'w', encoding='utf-8') as f:
                 json.dump(sample_qa_data, f)
                 
-            # Create OCR file
-            ocr_file = temp_path / "ocr_data.json"
-            with open(ocr_file, 'w', encoding='utf-8') as f:
-                json.dump(sample_ocr_data, f)
+            # Create OCR directory and files
+            ocr_dir = temp_path / "ocr"
+            ocr_dir.mkdir()
+            
+            # Create individual OCR files for each image
+            for image_id, ocr_content in sample_ocr_data.items():
+                ocr_file = ocr_dir / f"{image_id}.json"
+                with open(ocr_file, 'w', encoding='utf-8') as f:
+                    json.dump(ocr_content, f)
             
             # Update config with real paths
             config = sample_config.copy()
             config['image_path'] = str(images_dir)
             config['annotation_file'] = str(annotation_file)
-            config['ocr_file'] = str(ocr_file)
+            config['ocr_path'] = str(ocr_dir)
             
             # Initialize loader
             loader = InfographicsVqaLoader(config)
@@ -296,16 +311,21 @@ class TestInfographicsVqaLoader:
             with open(annotation_file, 'w', encoding='utf-8') as f:
                 json.dump(invalid_qa_data, f)
                 
-            # Create OCR file
-            ocr_file = temp_path / "ocr_data.json"
-            with open(ocr_file, 'w', encoding='utf-8') as f:
-                json.dump(sample_ocr_data, f)
+            # Create OCR directory and files
+            ocr_dir = temp_path / "ocr"
+            ocr_dir.mkdir()
+            
+            # Create individual OCR files for each image
+            for image_id, ocr_content in sample_ocr_data.items():
+                ocr_file = ocr_dir / f"{image_id}.json"
+                with open(ocr_file, 'w', encoding='utf-8') as f:
+                    json.dump(ocr_content, f)
             
             # Update config
             config = sample_config.copy()
             config['image_path'] = str(images_dir)
             config['annotation_file'] = str(annotation_file)
-            config['ocr_file'] = str(ocr_file)
+            config['ocr_path'] = str(ocr_dir)
             
             # Initialize loader
             loader = InfographicsVqaLoader(config)
@@ -331,8 +351,12 @@ class TestInfographicsVqaLoader:
             with open(annotation_file, 'w', encoding='utf-8') as f:
                 json.dump(sample_qa_data, f)
                 
+            # Create empty OCR directory with empty file
+            ocr_dir = temp_path / "ocr"
+            ocr_dir.mkdir()
+            
             # Create empty OCR file
-            ocr_file = temp_path / "ocr_data.json"
+            ocr_file = ocr_dir / "empty.json"
             with open(ocr_file, 'w', encoding='utf-8') as f:
                 json.dump({}, f)
             
@@ -340,7 +364,7 @@ class TestInfographicsVqaLoader:
             config = sample_config.copy()
             config['image_path'] = str(images_dir)
             config['annotation_file'] = str(annotation_file)
-            config['ocr_file'] = str(ocr_file)
+            config['ocr_path'] = str(ocr_dir)
             
             # Initialize loader
             loader = InfographicsVqaLoader(config)
@@ -399,16 +423,21 @@ class TestInfographicsVqaLoader:
             with open(annotation_file, 'w', encoding='utf-8') as f:
                 json.dump(sample_qa_data, f)
                 
-            # Create OCR file with WORD format
-            ocr_file = temp_path / "ocr_data.json"
-            with open(ocr_file, 'w', encoding='utf-8') as f:
-                json.dump(word_ocr_data, f)
+            # Create OCR directory and files with WORD format
+            ocr_dir = temp_path / "ocr"
+            ocr_dir.mkdir()
+            
+            # Create individual OCR files for each image
+            for image_id, ocr_content in word_ocr_data.items():
+                ocr_file = ocr_dir / f"{image_id}.json"
+                with open(ocr_file, 'w', encoding='utf-8') as f:
+                    json.dump(ocr_content, f)
             
             # Update config
             config = sample_config.copy()
             config['image_path'] = str(images_dir)
             config['annotation_file'] = str(annotation_file)
-            config['ocr_file'] = str(ocr_file)
+            config['ocr_path'] = str(ocr_dir)
             
             # Initialize loader
             loader = InfographicsVqaLoader(config)
@@ -471,7 +500,7 @@ class TestInfographicsVqaLoader:
             config = sample_config.copy()
             config['image_path'] = str(images_dir)
             config['annotation_file'] = str(annotation_file)
-            config['ocr_file'] = str(ocr_file)
+            config['ocr_path'] = str(ocr_dir)
             
             # Initialize loader
             loader = InfographicsVqaLoader(config)

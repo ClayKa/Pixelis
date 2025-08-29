@@ -18,7 +18,7 @@ class TestSa1bLoader:
         return {
             'name': 'test_sa1b',
             'path': '/fake/images/path',
-            'annotations_path': '/fake/annotations/path'
+            'annotation_path': '/fake/annotations/path'
         }
 
     @pytest.fixture
@@ -104,11 +104,11 @@ class TestSa1bLoader:
         with pytest.raises(ValueError, match="Sa1bLoader config must include 'path'"):
             Sa1bLoader(config_no_path)
         
-        # Test missing 'annotations_path'
+        # Test missing 'annotation_path'
         config_no_annotations = sample_config.copy()
-        del config_no_annotations['annotations_path']
+        del config_no_annotations['annotation_path']
         
-        with pytest.raises(ValueError, match="Sa1bLoader config must include 'annotations_path'"):
+        with pytest.raises(ValueError, match="Sa1bLoader config must include 'annotation_path'"):
             Sa1bLoader(config_no_annotations)
 
     def test_init_nonexistent_paths(self, sample_config):
@@ -144,7 +144,7 @@ class TestSa1bLoader:
             # Update config
             config = sample_config.copy()
             config['path'] = str(images_dir)
-            config['annotations_path'] = str(annotations_dir)
+            config['annotation_path'] = str(annotations_dir)
             
             # Initialize loader
             loader = Sa1bLoader(config)
@@ -188,7 +188,7 @@ class TestSa1bLoader:
             # Update config
             config = sample_config.copy()
             config['path'] = str(images_dir)
-            config['annotations_path'] = str(annotations_dir)
+            config['annotation_path'] = str(annotations_dir)
             
             # Initialize loader
             loader = Sa1bLoader(config)
@@ -227,7 +227,7 @@ class TestSa1bLoader:
             # Update config
             config = sample_config.copy()
             config['path'] = str(images_dir)
-            config['annotations_path'] = str(annotations_dir)
+            config['annotation_path'] = str(annotations_dir)
             
             # Initialize loader
             loader = Sa1bLoader(config)
@@ -302,7 +302,7 @@ class TestSa1bLoader:
             # Update config
             config = sample_config.copy()
             config['path'] = str(images_dir)
-            config['annotations_path'] = str(annotations_dir)
+            config['annotation_path'] = str(annotations_dir)
             
             # Initialize loader
             loader = Sa1bLoader(config)
@@ -337,7 +337,7 @@ class TestSa1bLoader:
             # Update config
             config = sample_config.copy()
             config['path'] = str(images_dir)
-            config['annotations_path'] = str(annotations_dir)
+            config['annotation_path'] = str(annotations_dir)
             
             # Initialize loader
             loader = Sa1bLoader(config)
@@ -379,7 +379,7 @@ class TestSa1bLoader:
             # Update config
             config = sample_config.copy()
             config['path'] = str(images_dir)
-            config['annotations_path'] = str(annotations_dir)
+            config['annotation_path'] = str(annotations_dir)
             
             # Initialize loader
             loader = Sa1bLoader(config)
@@ -433,7 +433,7 @@ class TestSa1bLoader:
             # Update config
             config = sample_config.copy()
             config['path'] = str(images_dir)
-            config['annotations_path'] = str(annotations_dir)
+            config['annotation_path'] = str(annotations_dir)
             
             # Initialize loader
             loader = Sa1bLoader(config)
@@ -472,7 +472,7 @@ class TestSa1bLoader:
             # Update config
             config = sample_config.copy()
             config['path'] = str(images_dir)
-            config['annotations_path'] = str(annotations_dir)
+            config['annotation_path'] = str(annotations_dir)
             
             # Initialize loader (should skip malformed file)
             loader = Sa1bLoader(config)
@@ -492,7 +492,7 @@ class TestSa1bLoader:
             # Update config with empty directories
             config = sample_config.copy()
             config['path'] = str(images_dir)
-            config['annotations_path'] = str(annotations_dir)
+            config['annotation_path'] = str(annotations_dir)
             
             # Initialize loader
             loader = Sa1bLoader(config)
@@ -520,7 +520,7 @@ class TestSa1bLoader:
             # Update config
             config = sample_config.copy()
             config['path'] = str(images_dir)
-            config['annotations_path'] = str(annotations_dir)
+            config['annotation_path'] = str(annotations_dir)
             
             # Initialize loader
             loader = Sa1bLoader(config)

@@ -80,12 +80,38 @@ class TestSerializeArg(TestCase):
         self.assertEqual(result["shape"], (2, 2))
         self.assertIn("dtype", result)
     
-    @patch('core.reproducibility.decorators.torch')
-    def test_serialize_torch_tensor(self, mock_torch):
+    def test_serialize_torch_tensor(self):
         """Test serializing torch tensors"""
-        # Skip this test due to complex mocking issues
-        # The actual torch tensor serialization is tested in integration tests
-        self.skipTest("Skipping due to mock isinstance recursion issues")
+        from unittest.mock import MagicMock
+        from core.reproducibility.decorators import _serialize_arg
+        
+        # Create a mock tensor instance that properly simulates a torch.Tensor
+        mock_tensor = MagicMock()
+        mock_tensor.shape = (2, 3)
+        mock_tensor.dtype = 'float32'
+        mock_tensor.device = 'cuda:0'
+        
+        # Patch torch module within the decorators module
+        with patch('core.reproducibility.decorators.torch') as mock_torch:
+            with patch('core.reproducibility.decorators.TORCH_AVAILABLE', True):
+                # Set up the mock Tensor class
+                MockTensor = type('Tensor', (), {})
+                mock_torch.Tensor = MockTensor
+                
+                # Make our mock_tensor an instance of MockTensor
+                mock_tensor.__class__ = MockTensor
+                
+                # Call the function
+                result = _serialize_arg(mock_tensor)
+                
+                # Assert the outcome
+                expected = {
+                    "type": "torch.Tensor",
+                    "shape": [2, 3],
+                    "dtype": 'float32',
+                    "device": 'cuda:0'
+                }
+                self.assertEqual(result, expected)
     
     def test_serialize_object_with_dict(self):
         """Test serializing objects with __dict__"""

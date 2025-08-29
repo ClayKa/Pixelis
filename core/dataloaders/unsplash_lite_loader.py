@@ -24,7 +24,7 @@ class UnsplashLiteLoader(BaseLoader):
         Initialize the UnsplashLiteLoader.
         
         Args:
-            config: Configuration dictionary containing 'path' and optional 'annotations_path'
+            config: Configuration dictionary containing 'path' and optional 'annotation_path'
         """
         # Validate required config keys before calling super().__init__
         if 'path' not in config:
@@ -35,12 +35,14 @@ class UnsplashLiteLoader(BaseLoader):
         if not self.images_path.exists():
             raise FileNotFoundError(f"Images directory not found: {self.images_path}")
         
-        # Optional annotations directory
+        # Optional annotations directory  
         self.annotations_path = None
         self.use_annotations = False
-        if 'annotations_path' in config:
-            self.annotations_path = Path(config['annotations_path'])
-            if self.annotations_path.exists():
+        if 'annotation_path' in config or 'annotations_path' in config:
+            # Support both 'annotation_path' and 'annotations_path' for backward compatibility
+            path_key = 'annotations_path' if 'annotations_path' in config else 'annotation_path'
+            self.annotations_path = Path(config[path_key])
+            if self.annotations_path.exists() and self.annotations_path.is_dir():
                 self.use_annotations = True
                 print(f"Found annotations directory: {self.annotations_path}")
             else:

@@ -471,7 +471,9 @@ class RewardComponents:
     
     def __post_init__(self):
         """Calculate total reward after initialization."""
-        self.calculate_total()
+        # Only recalculate if total_reward hasn't been explicitly set (is still 0.0)
+        if self.total_reward == 0.0:
+            self.calculate_total()
     
     def calculate_total(self, weights: Optional[Dict[str, float]] = None):
         """

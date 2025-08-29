@@ -16,6 +16,7 @@ import threading
 import time
 from typing import Dict, Any
 import pytest
+from scipy.stats import binomtest
 
 from core.engine.inference_engine import (
     InferenceEngine, SharedMemoryManager, SharedMemoryInfo
@@ -239,7 +240,7 @@ class TestInferenceEngine(unittest.TestCase):
         self.assertLessEqual(lr, self.config['max_learning_rate'])
     
     def test_should_request_human_review(self):
-        """Test HIL sampling logic."""
+        """Test HIL sampling logic using a statistically robust method."""
         # Test with HIL disabled
         self.engine.hil_mode_enabled = False
         should_review = self.engine._should_request_human_review()
@@ -255,10 +256,30 @@ class TestInferenceEngine(unittest.TestCase):
             if self.engine._should_request_human_review():
                 review_count += 1
         
-        # Should be approximately 2% (with some tolerance)
         expected_rate = self.config['hil_review_percentage']
-        actual_rate = review_count / num_trials
-        self.assertAlmostEqual(actual_rate, expected_rate, delta=0.01)
+        
+        # Perform a two-sided binomial test.
+        # The null hypothesis (H0) is that the true probability of success (review) is indeed our expected_rate.
+        # The p-value tells us the probability of observing a result as extreme as `review_count`
+        # if the null hypothesis were true.
+        # A high p-value means our observed result is consistent with the expected probability.
+        
+        result = binomtest(k=review_count, n=num_trials, p=expected_rate)
+        p_value = result.pvalue
+        
+        # We assert that the p-value is NOT extremely small.
+        # A threshold like 0.001 means we are extremely confident (>99.9%) that if the
+        # true probability was 0.02, we wouldn't have seen a result this skewed by chance.
+        # This makes the test highly tolerant of normal random fluctuations but still
+        # sensitive enough to catch significant bugs.
+        
+        self.assertGreater(
+            p_value, 
+            0.001,
+            f"The observed review count ({review_count}/{num_trials}) is statistically "
+            f"inconsistent with the expected probability of {expected_rate}. "
+            f"(p-value: {p_value:.4f})"
+        )
     
     @patch('core.engine.inference_engine.asyncio.run')
     def test_infer_and_adapt(self, mock_asyncio_run):

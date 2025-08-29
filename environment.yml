@@ -1,5 +1,6 @@
 name: pixelis
 channels:
+  - pytorch
   - defaults
 dependencies:
   - python=3.10
@@ -9,5 +10,6 @@ dependencies:
   - pytorch
   - scipy
   - pytorch-cuda=12.1
+  - tqdm
   - pip
 prefix: /home/clayka/miniconda3/envs/pixelis

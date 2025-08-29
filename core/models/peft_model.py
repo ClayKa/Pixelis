@@ -18,8 +18,17 @@ from transformers import (
     BitsAndBytesConfig
 )
 
+def _import_peft_library():
+    """Isolates the PEFT import so it can be mocked for testing."""
+    try:
+        from peft import LoraConfig, get_peft_model, PeftModel
+        return LoraConfig, get_peft_model, PeftModel
+    except ImportError:
+        raise ImportError("The 'peft' library is required for this functionality.")
+
+# Try to import PEFT at module level
 try:
-    from peft import LoraConfig, get_peft_model, PeftModel
+    LoraConfig, get_peft_model, PeftModel = _import_peft_library()
     PEFT_AVAILABLE = True
 except ImportError:
     PEFT_AVAILABLE = False

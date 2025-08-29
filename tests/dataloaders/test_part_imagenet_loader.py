@@ -84,21 +84,21 @@ class TestPartImageNetLoader:
 
     def test_init_missing_required_config_keys(self):
         """Test initialization with missing required configuration keys."""
-        # Test missing 'path'
-        config = {'annotation_path': '/some/path'}
-        with pytest.raises(ValueError, match="PartImageNetLoader config must include 'path'"):
+        # Test missing 'image_path'
+        config = {'mask_path': '/some/path'}
+        with pytest.raises(ValueError, match="PartImageNetLoader config must include 'image_path'"):
             PartImageNetLoader(config)
         
-        # Test missing 'annotation_path'
-        config = {'path': '/some/path'}
-        with pytest.raises(ValueError, match="PartImageNetLoader config must include 'annotation_path'"):
+        # Test missing 'mask_path'
+        config = {'image_path': '/some/path'}
+        with pytest.raises(ValueError, match="PartImageNetLoader config must include 'mask_path'"):
             PartImageNetLoader(config)
 
     def test_init_nonexistent_paths(self):
         """Test initialization with non-existent paths."""
         config = {
-            'path': '/nonexistent/images',
-            'annotation_path': '/nonexistent/annotations'
+            'image_path': '/nonexistent/images',
+            'mask_path': '/nonexistent/annotations'
         }
         with pytest.raises(FileNotFoundError):
             PartImageNetLoader(config)
@@ -107,8 +107,8 @@ class TestPartImageNetLoader:
         """Test successful index building with matching images and annotations."""
         config = {
             'name': 'test_part_imagenet',
-            'path': str(temp_dataset_structure['images_dir']),
-            'annotation_path': str(temp_dataset_structure['annotations_dir'])
+            'image_path': str(temp_dataset_structure['images_dir']),
+            'mask_path': str(temp_dataset_structure['annotations_dir'])
         }
         
         loader = PartImageNetLoader(config)
@@ -134,8 +134,8 @@ class TestPartImageNetLoader:
         
         config = {
             'name': 'test_part_imagenet',
-            'path': str(temp_dataset_structure['images_dir']),
-            'annotation_path': str(temp_dataset_structure['annotations_dir'])
+            'image_path': str(temp_dataset_structure['images_dir']),
+            'mask_path': str(temp_dataset_structure['annotations_dir'])
         }
         
         loader = PartImageNetLoader(config)
@@ -148,28 +148,25 @@ class TestPartImageNetLoader:
         assert 'n01440764_10043' not in indexed_stems
 
     def test_metadata_loading(self, temp_dataset_structure):
-        """Test loading of optional metadata file."""
+        """Test that loader works without metadata file (revised implementation)."""
         config = {
             'name': 'test_part_imagenet',
-            'path': str(temp_dataset_structure['images_dir']),
-            'annotation_path': str(temp_dataset_structure['annotations_dir']),
-            'metadata_file': str(temp_dataset_structure['metadata_path'])
+            'image_path': str(temp_dataset_structure['images_dir']),
+            'mask_path': str(temp_dataset_structure['annotations_dir'])
         }
         
+        # Should initialize successfully without metadata file
         loader = PartImageNetLoader(config)
         
-        # Check metadata was loaded
-        assert loader.part_id_to_label['n01440764'] == 'fish'
-        assert loader.part_id_to_label['n01443537'] == 'salamander'
-        assert loader.part_id_to_label['n01484850'] == 'newt'
+        # The loader no longer uses metadata files in the revised implementation
+        assert len(loader._index) > 0  # Should have successfully built index
 
     def test_get_item_success(self, temp_dataset_structure):
         """Test successful item retrieval with mask parsing."""
         config = {
             'name': 'test_part_imagenet',
-            'path': str(temp_dataset_structure['images_dir']),
-            'annotation_path': str(temp_dataset_structure['annotations_dir']),
-            'metadata_file': str(temp_dataset_structure['metadata_path'])
+            'image_path': str(temp_dataset_structure['images_dir']),
+            'mask_path': str(temp_dataset_structure['annotations_dir'])
         }
         
         loader = PartImageNetLoader(config)
@@ -182,47 +179,42 @@ class TestPartImageNetLoader:
         assert sample['media_type'] == 'image'
         assert 'annotations' in sample
         
-        # Verify annotations structure
+        # Verify revised annotations structure
         annotations = sample['annotations']
-        assert 'part_level_segmentation' in annotations
-        assert 'num_parts' in annotations
-        assert 'mask_info' in annotations
-        assert 'dataset_info' in annotations
+        assert 'segmentation_mask_path' in annotations
+        assert 'available_instance_ids' in annotations
+        assert 'instance_details' in annotations
+        assert 'num_instances' in annotations
+        assert 'mask_shape' in annotations
         
-        # Check part segmentation
-        parts = annotations['part_level_segmentation']
-        assert len(parts) == 1  # Single object per image
-        assert annotations['num_parts'] == 1
+        # Check that mask path is provided
+        assert annotations['segmentation_mask_path'] is not None
+        assert Path(annotations['segmentation_mask_path']).exists()
         
-        part = parts[0]
-        assert 'annotation_id' in part
-        assert 'class_id' in part
-        assert 'part_label' in part
-        assert 'pixel_value' in part
-        assert 'bbox' in part
-        assert 'area' in part
-        assert 'segmentation_mask' in part
-        assert 'mask_shape' in part
+        # Check instance IDs (should have non-zero values from the mask)
+        instance_ids = annotations['available_instance_ids']
+        assert len(instance_ids) > 0  # Should have at least one instance
+        assert all(isinstance(id, int) for id in instance_ids)
+        assert all(id != 0 for id in instance_ids)  # No background (0) values
         
-        # Verify mask info
-        mask_info = annotations['mask_info']
-        assert 'unique_values' in mask_info
-        assert 'background_value' in mask_info
-        assert 'object_value' in mask_info
-        assert len(mask_info['unique_values']) == 2
+        # Check instance details
+        instance_details = annotations['instance_details']
+        assert len(instance_details) == len(instance_ids)
+        assert annotations['num_instances'] == len(instance_ids)
         
-        # Verify dataset info
-        dataset_info = annotations['dataset_info']
-        assert dataset_info['task_type'] == 'binary_segmentation'
-        assert dataset_info['source'] == 'PartImageNet'
-        assert dataset_info['has_hierarchical_parts'] is False
+        for detail in instance_details:
+            assert 'instance_id' in detail
+            assert 'bbox' in detail
+            assert 'area' in detail
+            assert 'pixel_ratio' in detail
+            assert detail['instance_id'] in instance_ids
 
     def test_get_item_index_out_of_range(self, temp_dataset_structure):
         """Test get_item with invalid index."""
         config = {
             'name': 'test_part_imagenet',
-            'path': str(temp_dataset_structure['images_dir']),
-            'annotation_path': str(temp_dataset_structure['annotations_dir'])
+            'image_path': str(temp_dataset_structure['images_dir']),
+            'mask_path': str(temp_dataset_structure['annotations_dir'])
         }
         
         loader = PartImageNetLoader(config)
@@ -234,8 +226,8 @@ class TestPartImageNetLoader:
         """Test bounding box calculation from binary mask."""
         config = {
             'name': 'test_part_imagenet',
-            'path': str(temp_dataset_structure['images_dir']),
-            'annotation_path': str(temp_dataset_structure['annotations_dir'])
+            'image_path': str(temp_dataset_structure['images_dir']),
+            'mask_path': str(temp_dataset_structure['annotations_dir'])
         }
         
         loader = PartImageNetLoader(config)
@@ -256,8 +248,8 @@ class TestPartImageNetLoader:
         """Test retrieval of samples by class ID."""
         config = {
             'name': 'test_part_imagenet',
-            'path': str(temp_dataset_structure['images_dir']),
-            'annotation_path': str(temp_dataset_structure['annotations_dir'])
+            'image_path': str(temp_dataset_structure['images_dir']),
+            'mask_path': str(temp_dataset_structure['annotations_dir'])
         }
         
         loader = PartImageNetLoader(config)
@@ -267,8 +259,8 @@ class TestPartImageNetLoader:
         assert len(fish_samples) == 2  # Two fish samples in dataset
         
         for sample in fish_samples:
-            class_id = sample['annotations']['dataset_info']['class_id']
-            assert class_id == 'n01440764'
+            # Check that sample ID starts with the class ID
+            assert sample['sample_id'].startswith('n01440764')
         
         # Test with non-existent class
         empty_samples = loader.get_samples_by_class('n99999999')
@@ -278,8 +270,8 @@ class TestPartImageNetLoader:
         """Test class statistics calculation."""
         config = {
             'name': 'test_part_imagenet',
-            'path': str(temp_dataset_structure['images_dir']),
-            'annotation_path': str(temp_dataset_structure['annotations_dir'])
+            'image_path': str(temp_dataset_structure['images_dir']),
+            'mask_path': str(temp_dataset_structure['annotations_dir'])
         }
         
         loader = PartImageNetLoader(config)
@@ -309,35 +301,33 @@ class TestPartImageNetLoader:
         """Test mask statistics analysis."""
         config = {
             'name': 'test_part_imagenet',
-            'path': str(temp_dataset_structure['images_dir']),
-            'annotation_path': str(temp_dataset_structure['annotations_dir'])
+            'image_path': str(temp_dataset_structure['images_dir']),
+            'mask_path': str(temp_dataset_structure['annotations_dir'])
         }
         
         loader = PartImageNetLoader(config)
         stats = loader.get_mask_statistics(sample_size=4)
         
         assert 'samples_analyzed' in stats
-        assert 'unique_value_distribution' in stats
-        assert 'background_values' in stats
-        assert 'object_values' in stats
-        assert 'object_ratio_stats' in stats
+        assert 'instance_count_distribution' in stats
+        assert 'instance_ids' in stats
+        assert 'instance_area_ratios' in stats
         
         assert stats['samples_analyzed'] == 4
         
-        # Check unique value distribution (should be 2 for all samples)
-        unique_dist = stats['unique_value_distribution']
-        assert unique_dist['min'] == 2
-        assert unique_dist['max'] == 2
-        assert unique_dist['avg'] == 2
+        # Check instance count distribution (should be 1 instance per sample)
+        instance_dist = stats['instance_count_distribution']
+        assert instance_dist['min'] == 1
+        assert instance_dist['max'] == 1
+        assert instance_dist['avg'] == 1
         
-        # Check background values (should all be 158)
-        bg_values = stats['background_values']
-        assert 158 in bg_values['unique']
-        assert bg_values['most_common'] == 158
+        # Check instance IDs
+        instance_ids_info = stats['instance_ids']
+        assert instance_ids_info['unique_count'] >= 1  # At least one unique instance ID
         
-        # Check object ratios (3x3 object in 10x10 image = 9/100 = 0.09)
-        obj_ratios = stats['object_ratio_stats']
-        assert abs(obj_ratios['avg'] - 0.09) < 0.001  # Allow for small floating point differences
+        # Check instance area ratios (3x3 object in 10x10 image = 9/100 = 0.09)
+        area_ratios = stats['instance_area_ratios']
+        assert abs(area_ratios['avg'] - 0.09) < 0.001  # Allow for small floating point differences
 
     def test_malformed_annotation_file(self, temp_dataset_structure):
         """Test handling of corrupted annotation files."""
@@ -348,8 +338,8 @@ class TestPartImageNetLoader:
         
         config = {
             'name': 'test_part_imagenet',
-            'path': str(temp_dataset_structure['images_dir']),
-            'annotation_path': str(temp_dataset_structure['annotations_dir'])
+            'image_path': str(temp_dataset_structure['images_dir']),
+            'mask_path': str(temp_dataset_structure['annotations_dir'])
         }
         
         loader = PartImageNetLoader(config)
@@ -360,11 +350,11 @@ class TestPartImageNetLoader:
         # But get_item should handle the error gracefully
         sample = loader.get_item(0)  # This should correspond to the corrupted file
         
-        # Check that it returns empty annotations
+        # Check that it returns empty annotations with error
         annotations = sample['annotations']
-        assert annotations['part_level_segmentation'] == []
-        assert annotations['num_parts'] == 0
-        assert 'error' in annotations['mask_info']
+        assert annotations['available_instance_ids'] == []
+        assert annotations['num_instances'] == 0
+        assert 'error' in annotations
 
     def test_empty_directories(self, temp_dataset_structure):
         """Test loader behavior with empty directories."""
@@ -376,8 +366,8 @@ class TestPartImageNetLoader:
         
         config = {
             'name': 'test_part_imagenet',
-            'path': str(empty_images),
-            'annotation_path': str(empty_annotations)
+            'image_path': str(empty_images),
+            'mask_path': str(empty_annotations)
         }
         
         loader = PartImageNetLoader(config)
@@ -401,25 +391,25 @@ class TestPartImageNetLoader:
         
         config = {
             'name': 'test_part_imagenet',
-            'path': str(temp_dataset_structure['images_dir']),
-            'annotation_path': str(temp_dataset_structure['annotations_dir'])
+            'image_path': str(temp_dataset_structure['images_dir']),
+            'mask_path': str(temp_dataset_structure['annotations_dir'])
         }
         
         loader = PartImageNetLoader(config)
         sample = loader.get_item(0)
         
-        # Should handle single-value masks gracefully
+        # Should handle single-value masks gracefully (no non-zero instances)
         annotations = sample['annotations']
-        assert annotations['part_level_segmentation'] == []
-        assert annotations['num_parts'] == 0
-        assert len(annotations['mask_info']['unique_values']) == 1
+        assert annotations['available_instance_ids'] == []  # No non-zero values
+        assert annotations['num_instances'] == 0
+        assert annotations['instance_details'] == []
 
     def test_bbox_edge_cases(self, temp_dataset_structure):
         """Test bounding box calculation edge cases."""
         config = {
             'name': 'test_part_imagenet',
-            'path': str(temp_dataset_structure['images_dir']),
-            'annotation_path': str(temp_dataset_structure['annotations_dir'])
+            'image_path': str(temp_dataset_structure['images_dir']),
+            'mask_path': str(temp_dataset_structure['annotations_dir'])
         }
         
         loader = PartImageNetLoader(config)
@@ -436,31 +426,20 @@ class TestPartImageNetLoader:
         assert bbox == [0.0, 0.0, 10.0, 10.0]
 
     def test_metadata_file_errors(self, temp_dataset_structure):
-        """Test handling of metadata file loading errors."""
-        # Test with invalid JSON file
-        invalid_metadata = temp_dataset_structure['temp_dir'] / "invalid.json"
-        with open(invalid_metadata, 'w') as f:
-            f.write("invalid json content {")
-        
+        """Test that loader no longer uses metadata files."""
+        # The revised implementation doesn't use metadata files
         config = {
             'name': 'test_part_imagenet',
-            'path': str(temp_dataset_structure['images_dir']),
-            'annotation_path': str(temp_dataset_structure['annotations_dir']),
-            'metadata_file': str(invalid_metadata)
+            'image_path': str(temp_dataset_structure['images_dir']),
+            'mask_path': str(temp_dataset_structure['annotations_dir'])
         }
         
-        # Should create loader without crashing
+        # Should create loader successfully without any metadata
         loader = PartImageNetLoader(config)
         
-        # part_id_to_label should be empty
-        assert loader.part_id_to_label == {}
+        # Loader should work normally
+        assert len(loader._index) > 0
         
-        # Test with non-existent metadata file
-        config = {
-            'name': 'test_part_imagenet',
-            'path': str(temp_dataset_structure['images_dir']),
-            'annotation_path': str(temp_dataset_structure['annotations_dir']),
-            'metadata_file': '/nonexistent/metadata.json'
-        }
-        loader = PartImageNetLoader(config)
-        assert loader.part_id_to_label == {}
+        # Test that loader still works without metadata
+        sample = loader.get_item(0)
+        assert 'available_instance_ids' in sample['annotations']

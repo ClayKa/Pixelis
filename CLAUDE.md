@@ -60,6 +60,45 @@ pip install -r reference/Reason-RFT/requirements_sft.txt                      # 
 pip install -r reference/TTRL/verl/requirements.txt                          # For TTRL
 ```
 
+### Data Generation Commands
+
+#### Two-Stage CoTA Data Generation
+The project uses a two-stage data generation pipeline for creating Chain-of-Thought-Action (CoTA) training data:
+
+**Stage 1: Generate Specialized Datasets**
+```bash
+# Generate individual task-specific datasets
+python scripts/1_generate_specialized_datasets.py \
+    --manifest configs/data_generation_manifest.yaml \
+    --output-dir data_outputs/specialized \
+    --verbose
+
+# Dry run to check configuration
+python scripts/1_generate_specialized_datasets.py \
+    --manifest configs/data_generation_manifest.yaml \
+    --dry-run
+
+# Generate specific tasks only
+python scripts/1_generate_specialized_datasets.py \
+    --manifest configs/data_generation_manifest.yaml \
+    --tasks detail_perception_task geometric_reasoning_task
+```
+
+**Stage 2: Fuse and Validate Final Datasets**
+```bash
+# Create final SFT and RFT datasets with augmentation
+python scripts/2_fuse_and_validate_dataset.py \
+    --fusion-manifest configs/data_fusion_manifest.yaml \
+    --input-dir data_outputs/specialized \
+    --output-dir data_outputs/final \
+    --verbose
+
+# Dry run to check fusion configuration
+python scripts/2_fuse_and_validate_dataset.py \
+    --fusion-manifest configs/data_fusion_manifest.yaml \
+    --dry-run
+```
+
 ### Training Commands
 
 #### Supervised Fine-Tuning (SFT)
@@ -130,9 +169,21 @@ pytest tests/
 
 ### Key Components
 
+#### CoTA Data Generation System
+- **Two-Stage Pipeline**: Specialized dataset generation → Fusion and validation
+- **Task-Specific Generators**: 6 specialized generators for different visual reasoning capabilities
+  - Detail Perception (ZOOM-IN operations)
+  - Temporal Localization (SELECT-FRAME operations)
+  - Geometric Reasoning (SEGMENT_OBJECT_AT + GET_PROPERTIES)
+  - Contextual Reading (READ-TEXT operations)
+  - Spatio-Temporal Tracking (TRACK-OBJECT operations)
+  - Baseline Replication (Pixel-Reasoner compatibility)
+- **Trajectory Augmentation**: Golden samples, trap samples, self-correction trajectories
+- **Validation System**: Comprehensive quality checks and dataset balance validation
+
 #### Visual Operations Registry
 - Central system for managing pixel-space operations
-- Pluggable operations: `ZOOM_IN`, `SEGMENT_OBJECT_AT`, `GET_PROPERTIES`, `READ_TEXT`, `TRACK_OBJECT`
+- Pluggable operations: `ZOOM_IN`, `SEGMENT_OBJECT_AT+GET_PROPERTIES`, `GET_PROPERTIES`, `READ_TEXT`, `TRACK_OBJECT`
 
 #### Reward System
 - Multi-component reward orchestration

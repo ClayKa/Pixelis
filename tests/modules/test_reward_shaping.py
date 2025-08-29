@@ -733,7 +733,6 @@ class TestRewardOrchestrator:
         assert isinstance(result, dict)
         assert 'total_reward' in result
     
-    @pytest.mark.skip(reason="Clipping implementation has bug - skipping to focus on coverage success")
     def test_calculate_reward_clipping(self):
         """Test reward clipping with extreme values."""
         # Create orchestrator with normalization disabled to test clipping behavior

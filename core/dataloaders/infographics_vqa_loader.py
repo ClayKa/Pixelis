@@ -37,7 +37,7 @@ class InfographicsVqaLoader(BaseLoader):
                 - ocr_file: Path to the OCR JSON file
         """
         # Validate required config keys
-        required_keys = ['image_path', 'annotation_file', 'ocr_file']
+        required_keys = ['image_path', 'annotation_file', 'ocr_path']
         for key in required_keys:
             if key not in config:
                 raise ValueError(f"InfographicsVqaLoader config must include '{key}'")
@@ -45,24 +45,21 @@ class InfographicsVqaLoader(BaseLoader):
         # Store paths
         self.image_path = Path(config['image_path'])
         self.annotation_file = Path(config['annotation_file'])
-        self.ocr_file = Path(config['ocr_file'])
+        self.ocr_path = Path(config['ocr_path'])
         
-        # Determine if ocr_file is a directory or a file
-        if self.ocr_file.is_dir():
-            self.ocr_dir = self.ocr_file
-            self.ocr_file = None  # No single OCR file
-        else:
-            self.ocr_dir = self.ocr_file.parent
-        
-        # Validate paths exist
+        # Validate primary paths exist first
         if not self.image_path.exists():
             raise FileNotFoundError(f"Image directory not found: {self.image_path}")
         if not self.annotation_file.exists():
             raise FileNotFoundError(f"Annotation file not found: {self.annotation_file}")
-        if self.ocr_file and not self.ocr_file.exists():
-            raise FileNotFoundError(f"OCR file not found: {self.ocr_file}")
-        if not self.ocr_dir.exists():
-            raise FileNotFoundError(f"OCR directory not found: {self.ocr_dir}")
+        
+        # Validate OCR path exists, then check if it's a directory
+        if not self.ocr_path.exists():
+            raise FileNotFoundError(f"OCR directory not found: {self.ocr_path}")
+        if not self.ocr_path.is_dir():
+            raise ValueError(f"OCR path must be a directory: {self.ocr_path}")
+        
+        self.ocr_dir = self.ocr_path
         
         # Will be populated by _build_index
         self._image_id_to_ocr: Dict[str, Dict] = {}
@@ -99,73 +96,88 @@ class InfographicsVqaLoader(BaseLoader):
 
     def _load_ocr_data(self, qa_samples: List[Dict[str, Any]]) -> None:
         """
-        Load and pre-process OCR data for efficiency. Create an internal lookup 
-        dictionary that maps each image identifier to its corresponding OCR results.
-        
-        For InfographicsVQA, OCR data is typically stored as individual JSON files
-        per image in the OCR directory.
+        Load OCR data using the corrected logic that derives image_id from filename.
         
         Args:
             qa_samples: List of QA samples containing image references
         """
-        logger.info(f"Loading OCR data from {self.ocr_dir}")
+        logger.info("Starting aggregation of OCR files...")
         
-        # Get unique image filenames from QA samples
-        image_filenames = set()
-        for sample in qa_samples:
-            if 'image_local_name' in sample:
-                image_filenames.add(sample['image_local_name'])
+        # Step 1: Create a mapping from the QA annotation's image identifier to the QA sample
+        qa_image_id_map = {}
+        for qa_sample in qa_samples:
+            image_filename = qa_sample.get('image_local_name', '')
+            if image_filename:
+                # For InfographicsVQA, derive the stem (e.g., "20471.jpeg" -> "20471")
+                image_stem = Path(image_filename).stem
+                qa_image_id_map[image_stem] = qa_sample
         
-        logger.info(f"Processing OCR data for {len(image_filenames)} unique images")
+        # Step 2: Aggregate OCR data using filename-based mapping
+        ocr_files = list(self.ocr_dir.glob('*.json'))
+        logger.info(f"Found {len(ocr_files)} OCR files to process")
         
-        # First try to load from a consolidated OCR file if it exists
-        consolidated_ocr_data = {}
-        if self.ocr_file and self.ocr_file.exists():
+        for ocr_file in ocr_files:
             try:
-                with open(self.ocr_file, 'r', encoding='utf-8') as f:
-                    consolidated_ocr_data = json.load(f)
-                logger.info("Loaded consolidated OCR data")
-            except Exception as e:
-                logger.warning(f"Failed to load consolidated OCR file {self.ocr_file}: {e}")
-        
-        # Load OCR data for each image
-        loaded_count = 0
-        missing_count = 0
-        
-        for image_filename in image_filenames:
-            image_stem = Path(image_filename).stem
-            ocr_data = None
-            
-            # Try consolidated OCR data first
-            if consolidated_ocr_data:
-                if image_filename in consolidated_ocr_data:
-                    ocr_data = consolidated_ocr_data[image_filename]
-                elif image_stem in consolidated_ocr_data:
-                    ocr_data = consolidated_ocr_data[image_stem]
-            
-            # If not found in consolidated data, try individual OCR file
-            if not ocr_data:
-                ocr_file_path = self.ocr_dir / f"{image_stem}.json"
-                if ocr_file_path.exists():
-                    try:
-                        with open(ocr_file_path, 'r', encoding='utf-8') as f:
-                            ocr_data = json.load(f)
-                    except Exception as e:
-                        logger.warning(f"Failed to load individual OCR file {ocr_file_path}: {e}")
-                        ocr_data = {}
+                # Step A: Derive the image_id from the OCR filename
+                # e.g., "/path/to/ocr/20471.json" -> "20471"
+                image_id_from_filename = ocr_file.stem
+                
+                # Step B: Check if this ID exists in our list of QA samples
+                if image_id_from_filename in qa_image_id_map:
+                    with open(ocr_file, 'r', encoding='utf-8') as f:
+                        ocr_data = json.load(f)
+                    
+                    # Step C: Use the correct image identifier as the key for lookup
+                    # The key must match what get_item() will use for lookup (full filename)
+                    qa_sample = qa_image_id_map[image_id_from_filename]
+                    final_image_key = qa_sample['image_local_name']  # e.g., "20471.jpeg"
+                    
+                    self._image_id_to_ocr[final_image_key] = ocr_data
                 else:
-                    logger.debug(f"No OCR file found for image: {image_filename}")
-                    ocr_data = {}
-            
-            # Store the OCR data
-            self._image_id_to_ocr[image_filename] = ocr_data
-            
-            if ocr_data:
-                loaded_count += 1
-            else:
-                missing_count += 1
+                    logger.debug(f"Skipping OCR file {ocr_file.name} as it does not correspond to any known QA sample.")
+                
+            except (json.JSONDecodeError, IOError) as e:
+                logger.warning(f"Error reading or parsing OCR file {ocr_file}: {e}")
+                continue
         
-        logger.info(f"Successfully loaded OCR data for {loaded_count} images, {missing_count} missing")
+        logger.info(f"Successfully aggregated OCR data for {len(self._image_id_to_ocr)} unique images")
+        
+        # Step 3: Validate coverage for QA samples
+        missing_count = 0
+        found_count = 0
+        
+        for sample in qa_samples:
+            image_filename = sample.get('image_local_name', '')
+            if image_filename:
+                if image_filename in self._image_id_to_ocr:
+                    found_count += 1
+                else:
+                    missing_count += 1
+                    logger.debug(f"No OCR data found for image: {image_filename}")
+        
+        logger.info(f"OCR coverage: {found_count} found, {missing_count} missing from QA samples")
+    
+    def _extract_image_id_from_key(self, key: str) -> str:
+        """
+        Extract image ID from various OCR key formats.
+        
+        Args:
+            key: Key from OCR JSON file (could be image path, filename, or ID)
+            
+        Returns:
+            Standardized image ID
+        """
+        # Handle different key formats common in InfographicsVQA:
+        # - "infographicsVQA_images/12345.png" -> "12345.png" or "12345"
+        # - "12345.png" -> "12345.png" 
+        # - "12345" -> "12345"
+        
+        if '/' in key:
+            # Extract filename from path
+            return Path(key).name
+        else:
+            # Return as-is (could be filename or stem)
+            return key
 
     def get_item(self, index: int) -> Dict[str, Any]:
         """

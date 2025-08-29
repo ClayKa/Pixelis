@@ -37,6 +37,19 @@ class TestAssembly101Loader:
         return pd.DataFrame(data)
 
     @pytest.fixture
+    def mock_actions_data(self):
+        """Create mock actions metadata CSV data."""
+        data = {
+            'action_id': ['0010', '0003', '0019', '0182'],
+            'verb_id': ['0018', '0000', '0000', '0004'],
+            'noun_id': ['0027', '0002', '0005', '0026'],
+            'action_cls': ['clap hand', 'pick up screwdriver', 'pick up finished toy', 'unscrew track'],
+            'verb_cls': ['clap', 'pick up', 'pick up', 'unscrew'],
+            'noun_cls': ['hand', 'screwdriver', 'finished toy', 'track']
+        }
+        return pd.DataFrame(data)
+    
+    @pytest.fixture
     def mock_config(self, tmp_path):
         """Create mock configuration."""
         # Create temporary directories and files
@@ -47,11 +60,13 @@ class TestAssembly101Loader:
         annotation_dir.mkdir()
         
         annotation_file = annotation_dir / "train.csv"
+        actions_file = annotation_dir / "actions.csv"
         
         return {
             "name": "assembly101_test",
             "path": str(video_dir),
-            "annotation_file": str(annotation_file)
+            "annotation_file": str(annotation_file),
+            "action_metadata_file": str(actions_file)
         }
 
     def test_build_index_success(self, mock_config, mock_csv_data, tmp_path):
@@ -150,8 +165,9 @@ class TestAssembly101Loader:
         assert action_segment["end_frame"] == 168
         assert action_segment["duration_frames"] == 34  # 168 - 135 + 1
         assert action_segment["action"] == "clap hand"
-        assert action_segment["verb"] == "clap"
-        assert action_segment["noun"] == "hand"
+        # Updated to use new field names
+        assert action_segment["verb_class"] == "clap"
+        assert action_segment["noun_class"] == "hand"
         # pandas may convert string IDs to integers
         assert action_segment["action_id"] in ["0010", 10]
         assert action_segment["verb_id"] in ["0018", 18]
@@ -325,3 +341,144 @@ class TestAssembly101Loader:
         
         # Should return number of valid segments (2 videos exist for 3 segments)
         assert len(loader) == 2
+
+    def test_action_metadata_loading(self, mock_config, mock_actions_data, tmp_path):
+        """Test loading and using action metadata for ID translation."""
+        # Create simplified split data with only IDs (no text labels)
+        split_data = {
+            'video': ['session1/test.mp4'],
+            'start_frame': [100],
+            'end_frame': [200],
+            'verb_id': ['0018'],  # Should translate to 'clap'
+            'noun_id': ['0027']   # Should translate to 'hand'
+        }
+        split_df = pd.DataFrame(split_data)
+        
+        # Create actions metadata file
+        actions_file = Path(mock_config["action_metadata_file"])
+        mock_actions_data.to_csv(actions_file, index=False)
+        
+        # Setup split annotation file
+        annotation_file = Path(mock_config["annotation_file"])
+        split_df.to_csv(annotation_file, index=False)
+        
+        # Create video file
+        video_dir = Path(mock_config["path"])
+        session1_dir = video_dir / "session1"
+        session1_dir.mkdir()
+        (session1_dir / "test.mp4").touch()
+        
+        # Initialize loader - should load action metadata
+        loader = Assembly101Loader(mock_config)
+        
+        # Verify that lookup dictionaries were created
+        assert hasattr(loader, '_verb_id_to_cls')
+        assert hasattr(loader, '_noun_id_to_cls')
+        assert loader._verb_id_to_cls.get('0018') == 'clap'
+        assert loader._noun_id_to_cls.get('0027') == 'hand'
+        
+        # Get item and verify translation
+        sample = loader.get_item(0)
+        action_segment = sample["annotations"]["action_segment"]
+        
+        # Pandas may convert IDs to integers when reading CSV
+        assert action_segment["verb_id"] in ['0018', 18]
+        assert action_segment["verb_class"] == 'clap'
+        assert action_segment["noun_id"] in ['0027', 27]
+        assert action_segment["noun_class"] == 'hand'
+        assert action_segment["full_description"] == "clap hand"
+
+    def test_action_metadata_with_unknown_ids(self, mock_config, mock_actions_data, tmp_path):
+        """Test handling of unknown verb/noun IDs not in metadata."""
+        # Create split data with unknown IDs
+        split_data = {
+            'video': ['session1/test.mp4'],
+            'start_frame': [100],
+            'end_frame': [200],
+            'verb_id': ['9999'],  # Unknown ID
+            'noun_id': ['8888']   # Unknown ID
+        }
+        split_df = pd.DataFrame(split_data)
+        
+        # Create actions metadata file (without these IDs)
+        actions_file = Path(mock_config["action_metadata_file"])
+        mock_actions_data.to_csv(actions_file, index=False)
+        
+        # Setup files
+        annotation_file = Path(mock_config["annotation_file"])
+        split_df.to_csv(annotation_file, index=False)
+        
+        video_dir = Path(mock_config["path"])
+        session1_dir = video_dir / "session1"
+        session1_dir.mkdir()
+        (session1_dir / "test.mp4").touch()
+        
+        # Initialize loader
+        loader = Assembly101Loader(mock_config)
+        sample = loader.get_item(0)
+        
+        # Should use 'unknown_verb' and 'unknown_noun' for unknown IDs
+        action_segment = sample["annotations"]["action_segment"]
+        assert action_segment["verb_class"] == 'unknown_verb'
+        assert action_segment["noun_class"] == 'unknown_noun'
+        assert action_segment["full_description"] == "unknown_verb unknown_noun"
+
+    def test_without_action_metadata_file(self, mock_config, tmp_path):
+        """Test loader works without action metadata file."""
+        # Remove action_metadata_file from config
+        del mock_config["action_metadata_file"]
+        
+        # Create split data with both IDs and text labels
+        split_data = {
+            'video': ['session1/test.mp4'],
+            'start_frame': [100],
+            'end_frame': [200],
+            'verb_id': ['0018'],
+            'noun_id': ['0027'],
+            'verb_cls': ['clap'],  # Text labels present
+            'noun_cls': ['hand']
+        }
+        split_df = pd.DataFrame(split_data)
+        
+        # Setup files
+        annotation_file = Path(mock_config["annotation_file"])
+        split_df.to_csv(annotation_file, index=False)
+        
+        video_dir = Path(mock_config["path"])
+        session1_dir = video_dir / "session1"
+        session1_dir.mkdir()
+        (session1_dir / "test.mp4").touch()
+        
+        # Initialize loader - should work without metadata
+        loader = Assembly101Loader(mock_config)
+        
+        # Lookup dictionaries should be empty
+        assert len(loader._verb_id_to_cls) == 0
+        assert len(loader._noun_id_to_cls) == 0
+        
+        # Get item - should still use verb_cls and noun_cls from CSV
+        sample = loader.get_item(0)
+        action_segment = sample["annotations"]["action_segment"]
+        
+        assert action_segment["verb_class"] == 'clap'
+        assert action_segment["noun_class"] == 'hand'
+
+    def test_action_metadata_file_not_found_warning(self, mock_config, mock_csv_data, tmp_path, caplog):
+        """Test warning when action metadata file is specified but not found."""
+        # Set path to non-existent metadata file
+        mock_config["action_metadata_file"] = str(tmp_path / "nonexistent_actions.csv")
+        
+        # Setup annotation file and video
+        annotation_file = Path(mock_config["annotation_file"])
+        mock_csv_data.to_csv(annotation_file, index=False)
+        
+        video_dir = Path(mock_config["path"])
+        session1_dir = video_dir / "session1"
+        session1_dir.mkdir()
+        (session1_dir / "C10095_rgb.mp4").touch()
+        
+        # Initialize loader
+        loader = Assembly101Loader(mock_config)
+        
+        # Should log warning about missing metadata file
+        assert "Action metadata file not found" in caplog.text

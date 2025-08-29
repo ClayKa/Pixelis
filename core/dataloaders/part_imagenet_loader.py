@@ -14,106 +14,99 @@ logger = logging.getLogger(__name__)
 
 class PartImageNetLoader(BaseLoader):
     """
-    A concrete data loader for the PartImageNet dataset.
-
-    This loader is designed to handle PartImageNet's structure, which consists of:
-    1. A directory of original JPEG images
-    2. A parallel directory of PNG files for segmentation masks, where pixel
-       values encode object vs. background (binary segmentation)
+    [REVISED]
+    A concrete data loader for the PartImageNet dataset, adapted for a setup
+    without a central metadata file. It pairs images with PNG annotation masks
+    based on matching filenames and extracts raw instance IDs from the masks.
     
-    Each PNG mask contains exactly 2 unique pixel values:
-    - Background pixels (typically value 158)
-    - Foreground/object pixels (class-specific value)
+    This loader handles PartImageNet's structure:
+    1. A directory of original JPEG images
+    2. A parallel directory of PNG segmentation masks
+    
+    Each mask's pixel values directly encode part/instance IDs.
     """
 
     def __init__(self, config: Dict[str, Any]):
         """
+        [REVISED]
         Initialize the PartImageNetLoader.
         
         Args:
-            config: Configuration dictionary containing 'path' and 'annotation_path'
+            config: Configuration dictionary containing 'image_path' and 'mask_path'
         """
         # Validate required config keys before calling super().__init__
-        required_keys = ['path', 'annotation_path']
+        required_keys = ['image_path', 'mask_path']
         for key in required_keys:
             if key not in config:
                 raise ValueError(f"PartImageNetLoader config must include '{key}'")
         
         # Set up paths before calling super().__init__
-        self.images_path = Path(config['path'])
-        self.annotation_path = Path(config['annotation_path'])
+        self.image_dir = Path(config['image_path'])
+        self.mask_dir = Path(config['mask_path'])
         
         # Validate paths exist
-        if not self.images_path.exists():
-            raise FileNotFoundError(f"Images directory not found: {self.images_path}")
-        if not self.annotation_path.exists():
-            raise FileNotFoundError(f"Annotations directory not found: {self.annotation_path}")
+        if not self.image_dir.exists():
+            raise FileNotFoundError(f"Images directory not found: {self.image_dir}")
+        if not self.mask_dir.exists():
+            raise FileNotFoundError(f"Mask directory not found: {self.mask_dir}")
         
-        # Load optional metadata file for part ID to label mapping
-        self.part_id_to_label = {}
-        if 'metadata_file' in config:
-            metadata_path = Path(config['metadata_file'])
-            if metadata_path.exists():
-                try:
-                    with open(metadata_path, 'r', encoding='utf-8') as f:
-                        self.part_id_to_label = json.load(f)
-                    logger.info(f"Loaded part ID mappings from {metadata_path}")
-                except (json.JSONDecodeError, IOError) as e:
-                    logger.warning(f"Could not load metadata file {metadata_path}: {e}")
-        
-        # Now call super().__init__ which will call _build_index()
+        # [REVISED] The __init__ method is now simplified, as it no longer
+        # needs to load a metadata file. The parent's __init__ is sufficient.
         super().__init__(config)
 
     def _build_index(self) -> List[Tuple[Path, Path]]:
         """
-        Build index by pairing images with their corresponding PNG annotation masks.
+        Scans the image and mask directories, finds all corresponding
+        image-mask pairs based on identical filenames (sans extension),
+        and builds an index of these pairs.
         
         Returns:
-            List of tuples containing (image_path, annotation_path) pairs
+            List of tuples containing (image_path, mask_path) pairs
         """
-        # Find all image files (JPEG format)
-        image_files = list(self.images_path.glob('*.JPEG'))
-        if not image_files:
-            # Fallback to other common extensions
-            for ext in ['*.jpg', '*.jpeg', '*.JPG']:
-                image_files.extend(self.images_path.glob(ext))
+        # Find all image files (support multiple extensions)
+        image_files = []
+        for pattern in ['**/*.jpg', '**/*.jpeg', '**/*.JPG', '**/*.JPEG']:
+            image_files.extend(self.image_dir.glob(pattern))
         
         image_files.sort()
         logger.info(f"Found {len(image_files)} image files")
         
-        # Build index by pairing images with annotations
+        # Build index by pairing images with masks
         index = []
         matched_count = 0
         
-        for image_path in image_files:
-            # Construct expected annotation path
-            annotation_file = self.annotation_path / f"{image_path.stem}.png"
+        for image_file in image_files:
+            # Construct corresponding mask path
+            relative_path = image_file.relative_to(self.image_dir)
+            mask_file = (self.mask_dir / relative_path).with_suffix('.png')
             
-            # Only include if annotation file exists
-            if annotation_file.exists():
-                index.append((image_path, annotation_file))
+            # Only include if mask file exists
+            if mask_file.is_file():
+                index.append((image_file, mask_file))
                 matched_count += 1
             else:
-                logger.debug(f"No annotation found for {image_path.name}")
+                logger.debug(f"No mask found for {image_file.name}")
         
-        logger.info(f"Successfully matched {matched_count} images with annotations")
+        logger.info(f"Successfully matched {matched_count} images with masks")
         return index
 
     def get_item(self, index: int) -> Dict[str, Any]:
         """
-        Retrieve a single sample by index with binary segmentation mask.
+        [REVISED]
+        Retrieves a single image-mask pair and extracts all available segmentation
+        information directly from the mask's raw pixel values.
         
         Args:
             index: Sample index
             
         Returns:
-            Standardized sample dictionary with binary segmentation mask
+            Standardized sample dictionary with mask path and instance IDs
         """
         if index >= len(self._index):
             raise IndexError(f"Index {index} out of range (max: {len(self._index) - 1})")
         
-        # Get image and annotation paths
-        image_path, annotation_path = self._index[index]
+        # Get image and mask paths
+        image_path, mask_path = self._index[index]
         
         # Create base standardized structure
         sample = self._get_standardized_base(
@@ -122,89 +115,51 @@ class PartImageNetLoader(BaseLoader):
             media_type="image"
         )
         
-        # Parse the PNG annotation mask
+        # [REVISED LOGIC]
+        # Instead of looking up part labels, we parse the mask to provide the raw
+        # instance IDs (pixel values) available for this image.
         try:
-            # Load PNG mask and convert to numpy array
-            mask_image = Image.open(annotation_path)
-            mask_array = np.array(mask_image)
+            with Image.open(mask_path) as mask_image:
+                mask_array = np.array(mask_image)
             
-            # Get unique pixel values
+            # Find all unique non-zero pixel values. Each value is a part/object ID.
+            # Note: In PartImageNet, 158 is commonly used as background, so we exclude it too
             unique_values = np.unique(mask_array)
+            # Filter out background values (0 and commonly 158)
+            instance_ids = [int(val) for val in unique_values if val not in [0, 158]]
             
-            if len(unique_values) < 2:
-                logger.warning(f"Mask {annotation_path} has only {len(unique_values)} unique values")
-                # Create empty annotations for invalid masks
-                sample['annotations'].update({
-                    'part_level_segmentation': [],
-                    'num_parts': 0,
-                    'mask_info': {
-                        'unique_values': unique_values.tolist(),
-                        'background_value': None,
-                        'object_value': None
-                    }
+            # The standardized annotation now provides the mask's path and the list of
+            # raw instance IDs it contains.
+            sample['annotations']['segmentation_mask_path'] = str(mask_path.resolve())
+            sample['annotations']['available_instance_ids'] = instance_ids
+            
+            # Also provide mask shape for reference
+            sample['annotations']['mask_shape'] = mask_array.shape
+            
+            # Optionally provide more detailed information about each instance
+            instance_info = []
+            for instance_id in instance_ids:
+                instance_mask = (mask_array == instance_id).astype(np.uint8)
+                bbox = self._calculate_bbox_from_mask(instance_mask)
+                area = int(np.sum(instance_mask))
+                
+                instance_info.append({
+                    'instance_id': instance_id,
+                    'bbox': bbox,
+                    'area': area,
+                    'pixel_ratio': float(area / mask_array.size)
                 })
-                return sample
             
-            # Identify background and object values
-            # Background is typically the most frequent value (often 158)
-            value_counts = [(val, np.sum(mask_array == val)) for val in unique_values]
-            value_counts.sort(key=lambda x: x[1], reverse=True)
+            sample['annotations']['instance_details'] = instance_info
+            sample['annotations']['num_instances'] = len(instance_ids)
             
-            background_value = value_counts[0][0]
-            object_value = value_counts[1][0] if len(value_counts) > 1 else unique_values[unique_values != background_value][0]
-            
-            # Create binary mask for the object
-            object_mask = (mask_array == object_value).astype(np.uint8)
-            
-            # Calculate bounding box and area
-            bbox = self._calculate_bbox_from_mask(object_mask)
-            area = int(np.sum(object_mask))
-            
-            # Get class label from filename (ImageNet class ID)
-            class_id = image_path.stem.split('_')[0]  # e.g., 'n01440764' from 'n01440764_10029'
-            part_label = self.part_id_to_label.get(class_id, class_id)
-            
-            # Create standardized annotation
-            part_annotation = {
-                'annotation_id': 0,  # Single object per image
-                'class_id': class_id,
-                'part_label': part_label,
-                'pixel_value': int(object_value),
-                'bbox': bbox,
-                'area': area,
-                'segmentation_mask': object_mask,
-                'mask_shape': object_mask.shape
-            }
-            
-            # Add PartImageNet specific annotations
-            sample['annotations'].update({
-                'part_level_segmentation': [part_annotation],
-                'num_parts': 1,
-                'mask_info': {
-                    'unique_values': unique_values.tolist(),
-                    'background_value': int(background_value),
-                    'object_value': int(object_value),
-                    'mask_size': mask_array.shape,
-                    'background_ratio': float(value_counts[0][1] / mask_array.size),
-                    'object_ratio': float(area / mask_array.size)
-                },
-                'dataset_info': {
-                    'task_type': 'binary_segmentation',
-                    'source': 'PartImageNet',
-                    'class_id': class_id,
-                    'has_hierarchical_parts': False,
-                    'encoding': 'binary_pixel_values'
-                }
-            })
-            
-        except (IOError, OSError) as e:
-            logger.error(f"Error loading mask {annotation_path}: {e}")
-            # Return sample with empty annotations
-            sample['annotations'].update({
-                'part_level_segmentation': [],
-                'num_parts': 0,
-                'mask_info': {'error': str(e)}
-            })
+        except Exception as e:
+            logger.error(f"Failed to parse mask file {mask_path} for sample {image_path.stem}. Error: {e}")
+            sample['annotations']['segmentation_mask_path'] = None
+            sample['annotations']['available_instance_ids'] = []
+            sample['annotations']['instance_details'] = []
+            sample['annotations']['num_instances'] = 0
+            sample['annotations']['error'] = str(e)
         
         return sample
 
@@ -292,30 +247,25 @@ class PartImageNetLoader(BaseLoader):
         sample_indices = np.linspace(0, len(self._index) - 1, 
                                    min(sample_size, len(self._index)), dtype=int)
         
-        background_values = []
-        object_values = []
-        object_ratios = []
-        unique_value_counts = []
+        instance_counts = []
+        all_instance_ids = []
+        instance_area_ratios = []
         
         for idx in sample_indices:
             try:
-                _, annotation_path = self._index[idx]
-                mask_array = np.array(Image.open(annotation_path))
-                unique_values = np.unique(mask_array)
-                unique_value_counts.append(len(unique_values))
+                _, mask_path = self._index[idx]
+                mask_array = np.array(Image.open(mask_path))
                 
-                if len(unique_values) >= 2:
-                    value_counts = [(val, np.sum(mask_array == val)) for val in unique_values]
-                    value_counts.sort(key=lambda x: x[1], reverse=True)
-                    
-                    background_val = value_counts[0][0]
-                    object_val = value_counts[1][0]
-                    
-                    background_values.append(background_val)
-                    object_values.append(object_val)
-                    
-                    object_ratio = value_counts[1][1] / mask_array.size
-                    object_ratios.append(object_ratio)
+                # Get all non-zero values (instance IDs), excluding common background (158)
+                unique_vals = np.unique(mask_array)
+                instance_ids = [int(val) for val in unique_vals if val not in [0, 158]]
+                instance_counts.append(len(instance_ids))
+                all_instance_ids.extend(instance_ids)
+                
+                # Calculate area ratios for each instance
+                for instance_id in instance_ids:
+                    area_ratio = np.sum(mask_array == instance_id) / mask_array.size
+                    instance_area_ratios.append(area_ratio)
                     
             except Exception as e:
                 logger.debug(f"Error analyzing mask at index {idx}: {e}")
@@ -323,23 +273,20 @@ class PartImageNetLoader(BaseLoader):
         
         return {
             'samples_analyzed': len(sample_indices),
-            'unique_value_distribution': {
-                'min': min(unique_value_counts) if unique_value_counts else 0,
-                'max': max(unique_value_counts) if unique_value_counts else 0,
-                'avg': np.mean(unique_value_counts) if unique_value_counts else 0
+            'instance_count_distribution': {
+                'min': min(instance_counts) if instance_counts else 0,
+                'max': max(instance_counts) if instance_counts else 0,
+                'avg': np.mean(instance_counts) if instance_counts else 0,
+                'std': np.std(instance_counts) if instance_counts else 0
             },
-            'background_values': {
-                'unique': list(set(background_values)),
-                'most_common': max(set(background_values), key=background_values.count) if background_values else None
+            'instance_ids': {
+                'unique_count': len(set(all_instance_ids)),
+                'range': [min(all_instance_ids), max(all_instance_ids)] if all_instance_ids else [0, 0]
             },
-            'object_values': {
-                'range': [min(object_values), max(object_values)] if object_values else [0, 0],
-                'unique_count': len(set(object_values))
-            },
-            'object_ratio_stats': {
-                'min': min(object_ratios) if object_ratios else 0,
-                'max': max(object_ratios) if object_ratios else 0,
-                'avg': np.mean(object_ratios) if object_ratios else 0,
-                'std': np.std(object_ratios) if object_ratios else 0
+            'instance_area_ratios': {
+                'min': min(instance_area_ratios) if instance_area_ratios else 0,
+                'max': max(instance_area_ratios) if instance_area_ratios else 0,
+                'avg': np.mean(instance_area_ratios) if instance_area_ratios else 0,
+                'std': np.std(instance_area_ratios) if instance_area_ratios else 0
             }
         }

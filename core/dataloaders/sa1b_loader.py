@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 import logging
+from collections import defaultdict
+import glob
+from tqdm import tqdm
 
 from .base_loader import BaseLoader
 
@@ -32,14 +35,14 @@ class Sa1bLoader(BaseLoader):
             config: Configuration dictionary containing 'path' and 'annotations_path'
         """
         # Validate required config keys before calling super().__init__
-        required_keys = ['path', 'annotations_path']
+        required_keys = ['path', 'annotation_path']
         for key in required_keys:
             if key not in config:
                 raise ValueError(f"Sa1bLoader config must include '{key}'")
         
         # Set up paths before calling super().__init__
         self.images_path = Path(config['path'])
-        self.annotations_path = Path(config['annotations_path'])
+        self.annotations_path = Path(config['annotation_path'])
         
         # Validate paths exist
         if not self.images_path.exists():
@@ -52,56 +55,132 @@ class Sa1bLoader(BaseLoader):
 
     def _build_index(self) -> List[Dict[str, Any]]:
         """
-        Build index by matching available images with their annotation files.
+        Build index using the "Pre-process & Aggregate" pattern for handling directories 
+        with multiple annotation files.
         
         Returns:
             List of dictionaries containing image and annotation paths and metadata
         """
-        # Find all image files
+        # Step 1: Pre-process & Aggregate all annotation files in the directory
+        logger.info("Starting aggregation of annotation files...")
+        image_id_to_annotations = defaultdict(list)
+        
+        # Glob for all JSON files within the annotation_path
+        annotation_files = list(self.annotations_path.glob('*.json'))
+        logger.info(f"Found {len(annotation_files)} annotation files to process")
+        
+        for annotation_file in tqdm(annotation_files, desc=f"Aggregating {self.source_name} Annotations"):
+            try:
+                with open(annotation_file, 'r', encoding='utf-8') as f:
+                    annotation_data = json.load(f)
+                
+                # Handle both single-image and multi-image annotation file formats
+                if 'annotations' in annotation_data and 'image' in annotation_data:
+                    # Single image format: direct image-annotation mapping
+                    image_info = annotation_data['image']
+                    annotations = annotation_data['annotations']
+                    image_id = image_info.get('image_id', annotation_file.stem)
+                    
+                    # Store complete annotation data with image info
+                    image_id_to_annotations[image_id].append({
+                        'image_info': image_info,
+                        'annotations': annotations,
+                        'source_file': str(annotation_file)
+                    })
+                    
+                elif 'annotations' in annotation_data:
+                    # Multi-image format: iterate through annotations and group by image_id
+                    annotations = annotation_data['annotations']
+                    for ann in annotations:
+                        image_id = ann.get('image_id')
+                        if image_id is not None:
+                            image_id_to_annotations[image_id].append(ann)
+                            
+                else:
+                    logger.warning(f"Unexpected annotation file format in {annotation_file}")
+                    continue
+                    
+            except (json.JSONDecodeError, IOError, KeyError) as e:
+                logger.warning(f"Error reading annotation file {annotation_file}: {e}")
+                continue
+        
+        logger.info(f"Aggregated annotations for {len(image_id_to_annotations)} unique images")
+        
+        # Step 2: Match against local image files to create final index
         image_files = list(self.images_path.glob('*.jpg'))
         image_files.sort()
-        
         logger.info(f"Found {len(image_files)} image files")
         
-        # Build index by matching images to annotations
         index = []
         matched_count = 0
         
-        for image_path in image_files:
-            # Derive annotation filename from image filename
-            image_stem = image_path.stem  # e.g., "sa_1062875"
-            annotation_file = self.annotations_path / f"{image_stem}.json"
+        for image_path in tqdm(image_files, desc=f"Matching {self.source_name} Images"):
+            image_stem = image_path.stem
             
-            # Only include if annotation file exists
-            if annotation_file.exists():
+            # Try to match by different ID patterns (stem, full name, or extracted ID)
+            possible_image_ids = [
+                image_stem,
+                image_path.name,
+                # Extract numeric ID if present (e.g., "sa_1062875" -> "1062875")
+                image_stem.split('_')[-1] if '_' in image_stem else image_stem
+            ]
+            
+            matched_annotations = None
+            matched_image_id = None
+            
+            for possible_id in possible_image_ids:
+                if possible_id in image_id_to_annotations:
+                    matched_annotations = image_id_to_annotations[possible_id]
+                    matched_image_id = possible_id
+                    break
+                # Also try numeric conversion for string IDs
                 try:
-                    # Load annotation to get metadata
-                    with open(annotation_file, 'r', encoding='utf-8') as f:
-                        annotation_data = json.load(f)
+                    numeric_id = int(possible_id)
+                    if numeric_id in image_id_to_annotations:
+                        matched_annotations = image_id_to_annotations[numeric_id]
+                        matched_image_id = numeric_id
+                        break
+                except (ValueError, TypeError):
+                    continue
+            
+            if matched_annotations:
+                try:
+                    # For single-image format, use the aggregated data
+                    if isinstance(matched_annotations[0], dict) and 'image_info' in matched_annotations[0]:
+                        annotation_data = matched_annotations[0]
+                        image_info = annotation_data['image_info']
+                        annotations = annotation_data['annotations']
+                    else:
+                        # For multi-image format, the annotations are directly stored
+                        annotations = matched_annotations
+                        # Try to infer image dimensions from annotations or use defaults
+                        image_info = {
+                            'image_id': matched_image_id,
+                            'file_name': image_path.name,
+                            'width': 0,  # Will need to be set from image if needed
+                            'height': 0
+                        }
                     
-                    # Extract image metadata
-                    image_info = annotation_data.get('image', {})
-                    annotations = annotation_data.get('annotations', [])
-                    
-                    # Create index entry with all necessary information
+                    # Create index entry
                     index_entry = {
-                        'image_id': image_info.get('image_id', image_stem),
+                        'image_id': matched_image_id,
                         'image_path': str(image_path),
-                        'annotation_path': str(annotation_file),
+                        'annotation_path': None,  # No single annotation file
                         'width': image_info.get('width', 0),
-                        'height': image_info.get('height', 0),
+                        'height': image_info.get('height', 0), 
                         'file_name': image_info.get('file_name', image_path.name),
                         'num_annotations': len(annotations),
                         'annotations': annotations
                     }
+                    
                     index.append(index_entry)
                     matched_count += 1
                     
-                except (json.JSONDecodeError, IOError, KeyError) as e:
-                    logger.warning(f"Error reading annotation {annotation_file}: {e}")
+                except (KeyError, TypeError) as e:
+                    logger.warning(f"Error processing annotations for {image_path}: {e}")
                     continue
         
-        logger.info(f"Successfully matched {matched_count} images with annotations")
+        logger.info(f"Successfully matched {matched_count} images with aggregated annotations")
         return index
 
     def get_item(self, index: int) -> Dict[str, Any]:
