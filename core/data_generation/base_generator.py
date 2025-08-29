@@ -1,311 +1,444 @@
-# core/data_generation/base_generator.py
 """
-BaseGenerator Class
-===================
-Core logic for all data generation tasks including API connections,
-request throttling, error handling, and prompt management.
+Base Task Generator for CoTA (Chain-of-Thought-Action) data synthesis.
+
+This module provides the abstract base class for all specialized task generators,
+handling common functionality including API client initialization, prompt loading,
+generation orchestration, checkpointing, and error handling.
 """
 
-import os
 import json
 import time
-import logging
-import requests
-import yaml
-from pathlib import Path
-from typing import Dict, Any, Optional, List
+import random
 from abc import ABC, abstractmethod
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+import logging
+from datetime import datetime
+from tqdm import tqdm
+import openai
+import os
+import hashlib
+from collections import defaultdict
 
 logger = logging.getLogger(__name__)
 
 
-class BaseGenerator(ABC):
+class BaseTaskGenerator(ABC):
     """
-    Base class encapsulating core logic for data generation.
+    Abstract base class for all specialized CoTA task generators.
     
-    This class handles:
-    - API connections and request management
-    - Prompt loading and formatting
-    - Error handling and retries
-    - Request throttling
+    This class provides:
+    - Prompt template loading and formatting
+    - API client initialization and management
+    - Generation loop with progress tracking
+    - Checkpointing and recovery
+    - Error handling and retry logic
+    - Provenance tracking
+    - Statistics collection
     """
     
-    def __init__(self, config_path: str = "configs/data_generation_manifest.yaml"):
+    def __init__(
+        self, 
+        loaders: Dict[str, Any], 
+        config: Dict[str, Any], 
+        global_config: Dict[str, Any]
+    ):
         """
-        Initialize the BaseGenerator with configuration.
+        Initialize the base task generator.
         
         Args:
-            config_path: Path to the data generation manifest YAML file
+            loaders: Dictionary mapping loader names to initialized data loader objects
+            config: Task-specific configuration from manifest
+            global_config: Global configuration including API profiles
         """
-        self.config_path = Path(config_path)
-        self.config = self._load_configuration()
-        self.api_config = self._setup_api_config()
-        self.prompts = {}
-        self.request_count = 0
-        self.last_request_time = 0
+        self.loaders = loaders
+        self.config = config
+        self.global_config = global_config
+        self.task_name = self.config.get('name', 'unknown_task')
+        self.generator_params = self.config.get('generator_params', {})
         
-        # Load all prompts into memory
-        self._load_all_prompts()
+        # Initialize core components
+        self.prompt_template = self._load_prompt_template()
+        self.api_client = self._initialize_api_client()
         
-        logger.info(f"BaseGenerator initialized with config from {self.config_path}")
+        # Statistics tracking
+        self.generation_stats = defaultdict(int)
+        self.start_time = None
+        
+    def _load_prompt_template(self) -> str:
+        """
+        Load the prompt template from the configured file.
+        
+        Returns:
+            The loaded prompt template string
+        
+        Raises:
+            FileNotFoundError: If the prompt template file doesn't exist
+        """
+        prompt_path = Path(self.config.get('prompt_template', ''))
+        if not prompt_path.exists():
+            # Try relative to project root
+            project_root = Path(__file__).parent.parent.parent
+            prompt_path = project_root / prompt_path
+            
+        if not prompt_path.exists():
+            raise FileNotFoundError(
+                f"Prompt template not found for task '{self.task_name}': {prompt_path}"
+            )
+        
+        with open(prompt_path, 'r', encoding='utf-8') as f:
+            template = f.read()
+            
+        logger.info(f"Loaded prompt template from {prompt_path}")
+        return template
     
-    def _load_configuration(self) -> Dict[str, Any]:
-        """Load the data generation manifest."""
-        if not self.config_path.exists():
-            raise FileNotFoundError(f"Configuration file not found: {self.config_path}")
+    def _initialize_api_client(self) -> openai.OpenAI:
+        """
+        Initialize the OpenAI-compatible API client.
         
-        try:
-            with open(self.config_path, 'r') as f:
-                config = yaml.safe_load(f)
-                logger.debug(f"Loaded configuration with {len(config.get('tasks', {}))} tasks")
-                return config
-        except Exception as e:
-            logger.error(f"Failed to load configuration: {e}")
-            raise
-    
-    def _setup_api_config(self) -> Dict[str, Any]:
-        """Setup API configuration from manifest or environment."""
-        api_config = self.config.get('global_config', {}).get('api_config', {})
+        Returns:
+            Configured OpenAI client instance
+        """
+        # Get API configuration from global config
+        api_profile = self.global_config.get('api_profiles', {}).get('generator_api', {})
         
-        # Get API key from environment variable
-        api_key_env = api_config.get('api_key_env_variable', 'OPENROUTER_API_KEY')
-        api_key = os.getenv(api_key_env)
+        # Support both environment variables and config file
+        api_key = api_profile.get('api_key') or os.getenv('OPENROUTER_API_KEY')
+        base_url = api_profile.get('base_url', 'https://openrouter.ai/api/v1')
         
         if not api_key:
-            logger.warning(f"API key not found in environment variable: {api_key_env}")
-        
-        return {
-            'api_key': api_key,
-            'api_key_env': api_key_env,
-            'model': api_config.get('model', 'qwen/qwen3-8b:free'),
-            'base_url': api_config.get('base_url', 'https://openrouter.ai/api/v1/chat/completions'),
-            'temperature': api_config.get('temperature', 0.7),
-            'max_tokens': api_config.get('max_tokens', 2048),
-            'retry_attempts': api_config.get('retry_attempts', 3),
-            'retry_delay': api_config.get('retry_delay', 1),
-            'rate_limit_delay': api_config.get('rate_limit_delay', 0.5)
-        }
-    
-    def _load_all_prompts(self) -> None:
-        """Load all prompt templates from the configuration."""
-        tasks = self.config.get('tasks', {})
-        
-        for task_name, task_config in tasks.items():
-            generator_params = task_config.get('generator_params', {})
-            prompt_path = generator_params.get('prompt_template_path')
-            
-            if prompt_path:
-                prompt_content = self._load_prompt_from_file(prompt_path)
-                if prompt_content:
-                    self.prompts[task_name] = prompt_content
-                    logger.debug(f"Loaded prompt for task: {task_name}")
-    
-    def _load_prompt_from_file(self, prompt_path: str) -> Optional[str]:
-        """Load a prompt template from a file."""
-        path = Path(prompt_path)
-        if not path.exists():
-            logger.warning(f"Prompt file not found: {prompt_path}")
-            return None
-        
-        try:
-            with open(path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                logger.debug(f"Loaded prompt from {prompt_path}: {len(content)} chars")
-                return content
-        except Exception as e:
-            logger.error(f"Failed to load prompt from {prompt_path}: {e}")
-            return None
-    
-    def generate(self, prompt_name: str, variables: Dict[str, Any]) -> Optional[str]:
-        """
-        Generate content using the specified prompt and variables.
-        
-        Args:
-            prompt_name: Name of the prompt/task from the configuration
-            variables: Dictionary of variables to format the prompt with
-            
-        Returns:
-            API response text or None if generation failed
-        """
-        # Get the prompt template
-        prompt_template = self.prompts.get(prompt_name)
-        if not prompt_template:
-            logger.error(f"Prompt not found for task: {prompt_name}")
-            return None
-        
-        # Format the prompt with variables
-        try:
-            formatted_prompt = self._format_prompt(prompt_template, variables)
-        except Exception as e:
-            logger.error(f"Failed to format prompt: {e}")
-            return None
-        
-        # Apply rate limiting
-        self._apply_rate_limit()
-        
-        # Make API call with retry logic
-        for attempt in range(self.api_config['retry_attempts']):
-            try:
-                response = self._call_api(formatted_prompt)
-                if response:
-                    return response
-            except Exception as e:
-                logger.warning(f"API call attempt {attempt + 1} failed: {e}")
-                if attempt < self.api_config['retry_attempts'] - 1:
-                    time.sleep(self.api_config['retry_delay'] * (attempt + 1))
-        
-        logger.error(f"All API call attempts failed for prompt: {prompt_name}")
-        return None
-    
-    def _format_prompt(self, template: str, variables: Dict[str, Any]) -> str:
-        """
-        Format a prompt template with provided variables.
-        
-        Args:
-            template: Prompt template with placeholders
-            variables: Variables to replace placeholders
-            
-        Returns:
-            Formatted prompt string
-        """
-        formatted = template
-        
-        # Replace all variables in the template
-        for key, value in variables.items():
-            placeholder = f"{{{key}}}"
-            if placeholder in formatted:
-                formatted = formatted.replace(placeholder, str(value))
-        
-        # Check for any remaining placeholders
-        import re
-        remaining = re.findall(r'\{[^}]+\}', formatted)
-        if remaining:
-            logger.warning(f"Unresolved placeholders in prompt: {remaining}")
-        
-        return formatted
-    
-    def _apply_rate_limit(self) -> None:
-        """Apply rate limiting between API requests."""
-        current_time = time.time()
-        time_since_last = current_time - self.last_request_time
-        
-        if time_since_last < self.api_config['rate_limit_delay']:
-            sleep_time = self.api_config['rate_limit_delay'] - time_since_last
-            logger.debug(f"Rate limiting: sleeping for {sleep_time:.2f}s")
-            time.sleep(sleep_time)
-        
-        self.last_request_time = time.time()
-        self.request_count += 1
-    
-    def _call_api(self, prompt: str) -> Optional[str]:
-        """
-        Make an API call with the formatted prompt.
-        
-        Args:
-            prompt: Formatted prompt to send to the API
-            
-        Returns:
-            API response text or None if the call failed
-        """
-        if not self.api_config['api_key']:
-            logger.error("API key not configured")
-            return None
-        
-        headers = {
-            "Authorization": f"Bearer {self.api_config['api_key']}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/pixelis-ai/pixelis",
-            "X-Title": "Pixelis Data Generation"
-        }
-        
-        data = {
-            "model": self.api_config['model'],
-            "messages": [
-                {
-                    "role": "system",
-                    "content": "You are a helpful AI assistant that generates structured data for visual reasoning tasks."
-                },
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
-            "temperature": self.api_config['temperature'],
-            "max_tokens": self.api_config['max_tokens']
-        }
-        
-        try:
-            logger.debug(f"Making API request to {self.api_config['base_url']}")
-            response = requests.post(
-                self.api_config['base_url'],
-                headers=headers,
-                json=data,
-                timeout=60
+            logger.warning(
+                "No API key found. Set OPENROUTER_API_KEY env var or configure in manifest. "
+                "Using mock mode for development."
             )
-            
-            if response.status_code == 200:
-                result = response.json()
-                content = result['choices'][0]['message']['content']
-                logger.debug(f"API call successful, received {len(content)} chars")
-                return content
-            
-            # Handle rate limiting
-            if response.status_code == 429:
-                retry_after = int(response.headers.get('Retry-After', 5))
-                logger.warning(f"Rate limited, retry after {retry_after}s")
-                time.sleep(retry_after)
-                return None
-            
-            logger.error(f"API error {response.status_code}: {response.text}")
-            return None
-            
-        except requests.exceptions.Timeout:
-            logger.error("API request timed out")
-            return None
-        except requests.exceptions.RequestException as e:
-            logger.error(f"API request failed: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Unexpected error during API call: {e}")
-            return None
-    
-    def get_task_config(self, task_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Get configuration for a specific task.
+            return None  # Will trigger mock mode in _call_llm_api
         
-        Args:
-            task_name: Name of the task
-            
-        Returns:
-            Task configuration dictionary or None
-        """
-        return self.config.get('tasks', {}).get(task_name)
-    
-    def get_available_tasks(self) -> List[str]:
-        """Get list of available tasks from configuration."""
-        return list(self.config.get('tasks', {}).keys())
-    
-    def get_api_stats(self) -> Dict[str, Any]:
-        """Get API usage statistics."""
-        return {
-            'request_count': self.request_count,
-            'api_model': self.api_config['model'],
-            'api_configured': bool(self.api_config['api_key'])
-        }
+        client = openai.OpenAI(
+            api_key=api_key,
+            base_url=base_url
+        )
+        
+        logger.info(f"Initialized API client for '{self.task_name}' with base URL: {base_url}")
+        return client
     
     @abstractmethod
-    def process_response(self, response: str, task_name: str) -> Any:
+    def _build_context_placeholders(self) -> Dict[str, str]:
         """
-        Process the API response for a specific task.
+        Build the context placeholders for the prompt template.
         
-        This method should be overridden by specialized generators
-        to handle task-specific response processing.
+        This method must be implemented by each specialized generator to sample
+        from data loaders and construct the task-specific context.
+        
+        Returns:
+            Dictionary mapping placeholder names to their values
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement _build_context_placeholders()"
+        )
+    
+    def _call_llm_api(self, prompt: str, attempt: int = 1) -> Dict[str, Any]:
+        """
+        Call the LLM API with retry logic and error handling.
         
         Args:
-            response: Raw API response text
-            task_name: Name of the task being processed
+            prompt: The formatted prompt to send
+            attempt: Current attempt number for retry tracking
             
         Returns:
-            Processed response in task-specific format
+            Parsed JSON response from the LLM
+            
+        Raises:
+            Exception: After max retries are exhausted
         """
-        pass
+        max_retries = self.generator_params.get('max_retries', 3)
+        retry_delay = self.generator_params.get('retry_delay', 2.0)
+        
+        # Mock mode for development/testing
+        if self.api_client is None:
+            return self._generate_mock_response()
+        
+        try:
+            # Prepare API call parameters
+            model = self.generator_params.get('model', 'meta-llama/llama-3.2-90b-vision-instruct')
+            temperature = self.generator_params.get('temperature', 0.7)
+            max_tokens = self.generator_params.get('max_tokens', 4096)
+            
+            # Make the API call
+            response = self.api_client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You are a helpful assistant that generates structured CoTA trajectories in JSON format."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"}  # Force JSON output
+            )
+            
+            # Extract and parse response
+            response_content = response.choices[0].message.content
+            
+            # Try to parse JSON
+            try:
+                parsed_response = json.loads(response_content)
+                self.generation_stats['api_calls_successful'] += 1
+                return parsed_response
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response: {e}")
+                logger.debug(f"Raw response: {response_content[:500]}...")
+                raise
+                
+        except Exception as e:
+            self.generation_stats['api_calls_failed'] += 1
+            
+            if attempt < max_retries:
+                logger.warning(
+                    f"API call failed (attempt {attempt}/{max_retries}): {e}. "
+                    f"Retrying in {retry_delay} seconds..."
+                )
+                time.sleep(retry_delay * attempt)  # Exponential backoff
+                return self._call_llm_api(prompt, attempt + 1)
+            else:
+                logger.error(f"API call failed after {max_retries} attempts: {e}")
+                raise
+    
+    def _generate_mock_response(self) -> Dict[str, Any]:
+        """
+        Generate a mock response for development/testing.
+        
+        Returns:
+            Mock CoTA trajectory in the expected format
+        """
+        return {
+            "task_id": f"mock_{self.task_name}_{random.randint(1000, 9999)}",
+            "difficulty": random.choice(["easy", "medium", "hard"]),
+            "trajectory": [
+                {
+                    "step": 1,
+                    "thought": "Mock thought process",
+                    "action": "ZOOM_IN",
+                    "parameters": {"coordinates": [100, 100, 200, 200]},
+                    "result": "Mock result"
+                }
+            ],
+            "final_answer": "Mock answer",
+            "metadata": {
+                "generated_at": datetime.now().isoformat(),
+                "is_mock": True
+            }
+        }
+    
+    def _add_provenance(self, sample: Dict[str, Any], context_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Add provenance metadata to a generated sample.
+        
+        Args:
+            sample: The generated CoTA sample
+            context_data: Context information used for generation
+            
+        Returns:
+            Sample with added provenance metadata
+        """
+        # Generate unique ID for this sample
+        sample_id = hashlib.sha256(
+            f"{self.task_name}_{datetime.now().isoformat()}_{random.random()}".encode()
+        ).hexdigest()[:16]
+        
+        provenance = {
+            "sample_id": sample_id,
+            "task_name": self.task_name,
+            "generator_class": self.__class__.__name__,
+            "generated_at": datetime.now().isoformat(),
+            "model": self.generator_params.get('model', 'unknown'),
+            "temperature": self.generator_params.get('temperature', 0.7),
+            "data_sources": list(context_data.get('source_datasets', [])),
+            "generator_version": "1.0.0"
+        }
+        
+        sample['provenance'] = provenance
+        return sample
+    
+    def generate(self, num_samples: int, checkpoint_path: Path) -> List[Dict]:
+        """
+        Main generation method orchestrating the entire process.
+        
+        Args:
+            num_samples: Number of samples to generate
+            checkpoint_path: Path to save/load checkpoints
+            
+        Returns:
+            List of generated CoTA samples
+        """
+        generated_samples = []
+        self.start_time = time.time()
+        
+        # Ensure checkpoint directory exists
+        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        # Load from checkpoint if exists
+        if checkpoint_path.exists():
+            try:
+                with open(checkpoint_path, 'r') as f:
+                    for line in f:
+                        generated_samples.append(json.loads(line.strip()))
+                logger.info(
+                    f"Resumed from checkpoint: {len(generated_samples)}/{num_samples} "
+                    f"samples for '{self.task_name}'"
+                )
+            except Exception as e:
+                logger.error(f"Failed to load checkpoint: {e}. Starting fresh.")
+                generated_samples = []
+        
+        # Setup progress bar
+        start_index = len(generated_samples)
+        pbar = tqdm(
+            range(start_index, num_samples),
+            desc=f"Generating {self.task_name}",
+            initial=start_index,
+            total=num_samples
+        )
+        
+        # Main generation loop
+        checkpoint_interval = self.global_config.get('checkpoint_every_n_samples', 100)
+        
+        for i in pbar:
+            try:
+                # Build context for this sample
+                context_placeholders = self._build_context_placeholders()
+                
+                # Format the prompt
+                final_prompt = self.prompt_template.format(**context_placeholders)
+                
+                # Call LLM API
+                cota_sample = self._call_llm_api(final_prompt)
+                
+                # Add provenance metadata
+                cota_sample = self._add_provenance(cota_sample, context_placeholders)
+                
+                # Validate the generated sample
+                if self._validate_sample(cota_sample):
+                    generated_samples.append(cota_sample)
+                    self.generation_stats['samples_generated'] += 1
+                else:
+                    logger.warning(f"Sample {i+1} failed validation, retrying...")
+                    self.generation_stats['samples_invalid'] += 1
+                    continue
+                
+                # Update progress bar with stats
+                pbar.set_postfix({
+                    'success_rate': f"{self.generation_stats['samples_generated']}/{i+1}",
+                    'api_failures': self.generation_stats['api_calls_failed']
+                })
+                
+                # Checkpoint periodically
+                if (i + 1) % checkpoint_interval == 0:
+                    self._save_checkpoint(generated_samples, checkpoint_path)
+                    self._log_statistics()
+                    
+            except KeyboardInterrupt:
+                logger.info("Generation interrupted by user. Saving checkpoint...")
+                self._save_checkpoint(generated_samples, checkpoint_path)
+                raise
+                
+            except Exception as e:
+                logger.error(f"Failed to generate sample {i+1}: {e}")
+                self.generation_stats['samples_failed'] += 1
+                
+                # Add a failed sample placeholder to maintain count
+                failed_sample = {
+                    "error": str(e),
+                    "failed_at": datetime.now().isoformat(),
+                    "task_name": self.task_name,
+                    "sample_index": i
+                }
+                generated_samples.append(failed_sample)
+        
+        # Final save and statistics
+        self._save_checkpoint(generated_samples, checkpoint_path)
+        self._log_statistics()
+        
+        logger.info(
+            f"Completed generation for '{self.task_name}': "
+            f"{len(generated_samples)} samples generated"
+        )
+        
+        return generated_samples
+    
+    def _validate_sample(self, sample: Dict[str, Any]) -> bool:
+        """
+        Validate a generated sample for structural integrity.
+        
+        Args:
+            sample: The sample to validate
+            
+        Returns:
+            True if valid, False otherwise
+        """
+        # Check for required fields
+        required_fields = ['trajectory', 'final_answer']
+        for field in required_fields:
+            if field not in sample:
+                logger.debug(f"Sample missing required field: {field}")
+                return False
+        
+        # Validate trajectory structure
+        if not isinstance(sample.get('trajectory', None), list):
+            logger.debug("Trajectory is not a list")
+            return False
+        
+        if len(sample['trajectory']) == 0:
+            logger.debug("Empty trajectory")
+            return False
+        
+        # Validate each step in trajectory
+        for step in sample['trajectory']:
+            if not isinstance(step, dict):
+                logger.debug(f"Invalid step format: {step}")
+                return False
+            
+            # Check for minimum required step fields
+            if 'action' not in step:
+                logger.debug(f"Step missing action: {step}")
+                return False
+        
+        return True
+    
+    def _save_checkpoint(self, samples: List[Dict], checkpoint_path: Path):
+        """
+        Save samples to checkpoint file.
+        
+        Args:
+            samples: List of samples to save
+            checkpoint_path: Path to save checkpoint
+        """
+        try:
+            # Write to temporary file first for atomicity
+            temp_path = checkpoint_path.with_suffix('.tmp')
+            with open(temp_path, 'w') as f:
+                for sample in samples:
+                    f.write(json.dumps(sample, ensure_ascii=False) + '\n')
+            
+            # Atomic rename
+            temp_path.replace(checkpoint_path)
+            
+            logger.debug(f"Saved checkpoint with {len(samples)} samples to {checkpoint_path}")
+            
+        except Exception as e:
+            logger.error(f"Failed to save checkpoint: {e}")
+    
+    def _log_statistics(self):
+        """Log generation statistics."""
+        elapsed_time = time.time() - self.start_time if self.start_time else 0
+        
+        stats_msg = (
+            f"Generation Statistics for '{self.task_name}':\n"
+            f"  - Samples generated: {self.generation_stats['samples_generated']}\n"
+            f"  - Invalid samples: {self.generation_stats['samples_invalid']}\n"
+            f"  - Failed samples: {self.generation_stats['samples_failed']}\n"
+            f"  - Successful API calls: {self.generation_stats['api_calls_successful']}\n"
+            f"  - Failed API calls: {self.generation_stats['api_calls_failed']}\n"
+            f"  - Elapsed time: {elapsed_time:.2f} seconds\n"
+            f"  - Generation rate: {self.generation_stats['samples_generated'] / max(elapsed_time, 1):.2f} samples/sec"
+        )
+        
+        logger.info(stats_msg)

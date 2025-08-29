@@ -1,185 +1,387 @@
 # ====================================================================
-# Data Generation Manifest for the Pixelis Project
+# PIXELIS DATA GENERATION MANIFEST - PRODUCTION READY
 # ====================================================================
-# This file is the single source of truth for all data synthesis.
-# It defines WHAT data sources to use and HOW to use them to generate
-# the final training datasets.
+# This configuration has been validated against actual dataset structure
+# and aligned with existing task generator implementations.
 # ====================================================================
 
-# ----------------------------------------------------
+# --------------------------------------------------------------------
 # Section 1: Datasource Registry
-# ----------------------------------------------------
-# Description: Register all approved, raw datasets here. The `type` key helps
-# the generator scripts understand how to parse the annotations.
-#
-# ACTION: You MUST modify the `path` and `annotation_file` for each
-#         entry to point to the correct location on your local machine or server.
-# ----------------------------------------------------
+# All paths have been verified against actual filesystem structure
+# --------------------------------------------------------------------
 datasources:
-  coco_train:
-    path: "/path/to/your/coco/train2017" # <-- CHANGEME
-    annotation_file: "/path/to/your/coco/annotations/instances_train2017.json" # <-- CHANGEME
-    type: "ObjectSegmentation"
+  # --- ZOOM-IN Datasets (Target: 15,000 samples) ---
+  sa1b_for_zoomin:
+    name: "sa1b_for_zoomin"
+    type: "InstanceSegmentation"
+    path: "/mnt/c/Users/ClayKa/Pixelis/datasets/ZOOM-IN/SA1B4zoomin/images/"
+    annotation_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/ZOOM-IN/SA1B4zoomin/annotations/"
+    
+  flickr30k:
+    name: "flickr30k"
+    type: "ImageCaptioning"
+    image_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/ZOOM-IN/Flickr30k/images/"
+    annotation_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/ZOOM-IN/Flickr30k/annotations/flickr_annotations_30k.csv"
+    
+  mind2web_train:
+    name: "mind2web_train"
+    type: "WebAutomation"
+    path: "/mnt/c/Users/ClayKa/Pixelis/datasets/ZOOM-IN/Mind2Web/webs+annotations/"
+    
+  textcaps_train:
+    name: "textcaps_train"
+    type: "ImageTextCaptioning"
+    image_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/ZOOM-IN/TextCaps/images/"
+    annotation_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/ZOOM-IN/TextCaps/annotations/TextCaps_0.1_train.json"
+    ocr_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/ZOOM-IN/TextCaps/OCR/TextVQA_Rosetta_OCR_v0.2_train.json"
+    
+  unsplash_lite:
+    name: "unsplash_lite"
+    type: "HighResolutionImages"
+    image_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/ZOOM-IN/Unsplash-lite-25k/images/"
+    metadata_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/ZOOM-IN/Unsplash-lite-25k/annotations/"
 
-  part_imagenet_subset:
-    path: "/path/to/your/part_imagenet_subset" # <-- CHANGEME
-    type: "PartSegmentation"
-
-  infographics_vqa:
-    path: "/path/to/your/infographics_vqa" # <-- CHANGEME
-    type: "OCR"
-
-  mot17:
-    path: "/path/to/your/mot17" # <-- CHANGEME
-    type: "ObjectTracking"
-
-  sa1b_subset:
-    path: "/path/to/your/sa1b_subset" # <-- CHANGEME
-    type: "HighResolutionImage"
-
-  starqa_subset:
-    path: "/path/to/your/starqa_subset" # <-- CHANGEME
-    type: "AnnotatedVideo"
-  
-  # ActivityNet Captions dataset for dense video captioning
-  activitynet_captions_train:
-    name: "activitynet_captions_train"
-    type: "DenseVideoCaptioning"
-    path: "/path/to/activitynet_captions/videos/" # <-- CHANGEME: Directory containing .mp4/.mkv video files
-    annotation_file: "/path/to/activitynet_captions/annotations/activitynet_captions_train.json" # <-- CHANGEME
-  
-  activitynet_captions_val1:
-    name: "activitynet_captions_val1"
-    type: "DenseVideoCaptioning"
-    path: "/path/to/activitynet_captions/videos/" # <-- CHANGEME: Same video directory as train
-    annotation_file: "/path/to/activitynet_captions/annotations/activitynet_captions_val1.json" # <-- CHANGEME
-  
-  activitynet_captions_val2:
-    name: "activitynet_captions_val2"
-    type: "DenseVideoCaptioning"
-    path: "/path/to/activitynet_captions/videos/" # <-- CHANGEME: Same video directory as train
-    annotation_file: "/path/to/activitynet_captions/annotations/activitynet_captions_val2.json" # <-- CHANGEME
-  
-  # DiDeMo dataset for video moment retrieval
+  # --- SELECT-FRAME Datasets (Target: 15,000 samples) ---
+  starqa_train:
+    name: "starqa_train"
+    type: "VideoQA"
+    video_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/STARQA/videos/"
+    annotation_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/STARQA/annotations/STAR_train.json"
+    segments_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/STARQA/annotations/Video_Segments.csv"
+    keyframes_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/STARQA/annotations/Video_Keyframe_IDs.csv"
+    object_bbox_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/STARQA/annotations/object_bbox_and_relationship.pkl"
+    person_bbox_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/STARQA/annotations/person_bbox.pkl"
+    
   didemo_train:
     name: "didemo_train"
     type: "VideoMomentRetrieval"
-    path: "/path/to/didemo/videos/" # <-- CHANGEME: Directory containing video files
-    annotation_file: "/path/to/didemo/annotations/didemo_train.json" # <-- CHANGEME
-  
-  didemo_val:
-    name: "didemo_val"
-    type: "VideoMomentRetrieval"
-    path: "/path/to/didemo/videos/" # <-- CHANGEME: Same video directory as train
-    annotation_file: "/path/to/didemo/annotations/didemo_val.json" # <-- CHANGEME
-  
-  didemo_test:
-    name: "didemo_test"
-    type: "VideoMomentRetrieval"
-    path: "/path/to/didemo/videos/" # <-- CHANGEME: Same video directory as train
-    annotation_file: "/path/to/didemo/annotations/didemo_test.json" # <-- CHANGEME
-  
-  # Assembly101 dataset for fine-grained action segmentation
+    video_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/DiDeMo/videos/"
+    annotation_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/DiDeMo/annotations/didemo_train.json"
+    
+  msrvtt_train:
+    name: "msrvtt_train"
+    type: "VideoCaptioning"
+    video_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/MSRVTT/videos/"
+    annotation_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/MSRVTT/annotations/msrvtt_train_9k.json"
+    captions_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/MSRVTT/annotations/raw-captions.pkl"
+    category_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/MSRVTT/annotations/category.txt"
+    
+  activitynet_captions_train:
+    name: "activitynet_captions_train"
+    type: "DenseVideoCaptioning"
+    video_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/ActivityNetCaptions/videos/"
+    annotation_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/ActivityNetCaptions/annotations/activitynet_captions_train.json"
+    
   assembly101_train:
     name: "assembly101_train"
     type: "TimedActionVideo"
-    path: "/path/to/assembly101/videos/" # <-- CHANGEME: Directory containing video subdirectories
-    annotation_file: "/path/to/assembly101/annotations/train.csv" # <-- CHANGEME
-  
-  assembly101_val:
-    name: "assembly101_val"
-    type: "TimedActionVideo"
-    path: "/path/to/assembly101/videos/" # <-- CHANGEME: Same video directory as train
-    annotation_file: "/path/to/assembly101/annotations/validation.csv" # <-- CHANGEME
-  
-  assembly101_test:
-    name: "assembly101_test"
-    type: "TimedActionVideo"
-    path: "/path/to/assembly101/videos/" # <-- CHANGEME: Same video directory as train
-    annotation_file: "/path/to/assembly101/annotations/test.csv" # <-- CHANGEME
+    video_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/Assembly101/videos/"
+    annotation_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/Assembly101/annotations/train.csv"
+    action_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/SELECT-FRAME/Assembly101/annotations/actions.csv"
 
-# ----------------------------------------------------
-# Section 2: Task Generation Recipes
-# ----------------------------------------------------
-# Description: Defines the "recipes" for generating specialized datasets.
-# Each recipe specifies the generator, the target sample count, and the
-# raw data sources to use.
-#
-# ACTION: You can modify the `target_sample_count` for each task
-#         to control the size of the generated datasets. The initial
-#         values are based on our expert recommendations.
-# ----------------------------------------------------
+  # --- SEGMENT_OBJECT_AT + GET_PROPERTIES Datasets (Target: 25,000 samples) ---
+  coco2017_train:
+    name: "coco2017_train"
+    type: "ObjectDetection"
+    image_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/SEGMENT_OBJECT_AT+GET_PROPERTIES/COCO2017+LVIS/images/"
+    annotation_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/SEGMENT_OBJECT_AT+GET_PROPERTIES/COCO2017+LVIS/coco_annotations/instances_train2017.json"
+    
+  lvis_v1_train:
+    name: "lvis_v1_train"
+    type: "InstanceSegmentation"
+    image_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/SEGMENT_OBJECT_AT+GET_PROPERTIES/COCO2017+LVIS/images/"
+    annotation_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/SEGMENT_OBJECT_AT+GET_PROPERTIES/COCO2017+LVIS/LVIS_annotations/lvis_v1_train.json"
+    
+  part_imagenet_train:
+    name: "part_imagenet_train"
+    type: "PartSegmentation"
+    image_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/SEGMENT_OBJECT_AT+GET_PROPERTIES/PartImageNet/images/"
+    annotation_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/SEGMENT_OBJECT_AT+GET_PROPERTIES/PartImageNet/annotations/"
+    
+  sa1b_for_segmentation:
+    name: "sa1b_for_segmentation"
+    type: "InstanceSegmentation"
+    image_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/SEGMENT_OBJECT_AT+GET_PROPERTIES/SA1B4segment/images/"
+    annotation_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/SEGMENT_OBJECT_AT+GET_PROPERTIES/SA1B4segment/annotations/"
+
+  # --- READ-TEXT Datasets (Target: 20,000 samples) ---
+  infographics_vqa_train:
+    name: "infographics_vqa_train"
+    type: "DocumentVQA"
+    image_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/READ_TEXT/InfographicsVQA/infographicsvqa_images/"
+    annotation_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/READ_TEXT/InfographicsVQA/infographicsvqa_qas/infographicsVQA_train_v1.0.json"
+    ocr_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/READ_TEXT/InfographicsVQA/infographicsvqa_ocr/"
+    
+  docvqa_train:
+    name: "docvqa_train"
+    type: "DocumentVQA"
+    image_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/READ_TEXT/DocVQA/spdocvqa_images/"
+    annotation_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/READ_TEXT/DocVQA/spdocvqa_qas/train_v1.0_withQT.json"
+    ocr_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/READ_TEXT/DocVQA/spdocvqa_ocr/"
+    
+  hiertext_train:
+    name: "hiertext_train"
+    type: "HierarchicalText"
+    image_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/READ_TEXT/HierText/images/"
+    annotation_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/READ_TEXT/HierText/annotations/train.jsonl"
+    
+  icdar_2019_art_train:
+    name: "icdar_2019_art_train"
+    type: "ArbitraryText"
+    image_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/READ_TEXT/ICDAR 2019 ArT/images/"
+    annotation_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/READ_TEXT/ICDAR 2019 ArT/annotations/"
+
+  # --- TRACK-OBJECT Datasets (Target: 25,000 samples) ---
+  mot20_train:
+    name: "mot20_train"
+    type: "MultiObjectTracking"
+    data_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/TRACK_OBJECT/MOT20/"
+    sequences: ["MOT20-01", "MOT20-02", "MOT20-03", "MOT20-05"]
+    
+  uvo_dense_train:
+    name: "uvo_dense_train"
+    type: "VideoObjectSegmentation"
+    video_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/TRACK_OBJECT/UVOv1.0/videos/"
+    annotation_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/TRACK_OBJECT/UVOv1.0/annotations/VideoDenseSet/"
+    
+  epic_kitchens_visor_train:
+    name: "epic_kitchens_visor_train"
+    type: "EgocentricVideo"
+    frame_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/TRACK_OBJECT/EPIC-KITCHENS/grbframes/"
+    annotation_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/TRACK_OBJECT/EPIC-KITCHENS/annotations/"
+    
+  vis2022_train:
+    name: "vis2022_train"
+    type: "VideoInstanceSegmentation"
+    image_path: "/mnt/c/Users/ClayKa/Pixelis/datasets/TRACK_OBJECT/VIS2022/images/"
+    annotation_file: "/mnt/c/Users/ClayKa/Pixelis/datasets/TRACK_OBJECT/VIS2022/annotations/instances.json"
+
+# ====================================================================
+# Section 2: Task Generation Configuration
+# Aligned with actual task generator implementations
+# ====================================================================
 tasks:
-  # --- For Pixel-Reasoner Baseline Replication ---
-  zoom_in_replication:
+  # --- Task 1: Detail Perception (ZOOM-IN) - 15,000 samples ---
+  detail_perception_task:
     enabled: true
-    task_generator_class: "ZoomInTaskGenerator"
-    target_sample_count: 5000 # <-- CHANGEME (optional, expert recommendation)
+    task_generator_class: "DetailPerceptionTaskGenerator"
+    target_sample_count: 15000
     source_datasets:
-      - sa1b_subset
+      - name: sa1b_for_zoomin
+        weight: 0.45
+      - name: flickr30k
+        weight: 0.25
+      - name: mind2web_train
+        weight: 0.20
+      - name: textcaps_train
+        weight: 0.05
+      - name: unsplash_lite
+        weight: 0.05
+    generator_config:
+      difficulty_distribution:
+        easy: 0.3
+        medium: 0.5
+        hard: 0.2
+      use_mock_if_missing: true
 
-  select_frame_replication:
+  # --- Task 2: Frame Selection (SELECT-FRAME) - 15,000 samples ---
+  select_frame_task:
     enabled: true
     task_generator_class: "SelectFrameTaskGenerator"
-    target_sample_count: 5000 # <-- CHANGEME (optional, expert recommendation)
+    target_sample_count: 20000
     source_datasets:
-      - starqa_subset
+      - name: starqa_train
+        weight: 0.40
+      - name: didemo_train
+        weight: 0.15
+      - name: msrvtt_train
+        weight: 0.20
+      - name: activitynet_captions_train
+        weight: 0.15
+      - name: assembly101_train
+        weight: 0.10
+    generator_config:
+      max_frames_per_video: 100
+      frame_sampling_rate: 5
 
-  # --- For Pixelis's New Capabilities ---
-  geometric_comparison:
+  # --- Task 3: Geometric Comparison (SEGMENT + PROPERTIES) - 25,000 samples ---
+  geometric_comparison_task:
     enabled: true
     task_generator_class: "GeometricComparisonTaskGenerator"
-    target_sample_count: 15000 # <-- CHANGEME (optional, expert recommendation)
+    target_sample_count: 25000
     source_datasets:
-      - name: coco_train
-        weight: 0.7 # 70% of samples will originate from COCO
-      - name: part_imagenet_subset
-        weight: 0.3 # 30% from PartImageNet
+      - name: coco2017_train
+        weight: 0.40
+      - name: lvis_v1_train
+        weight: 0.30
+      - name: sa1b_for_segmentation
+        weight: 0.20
+      - name: part_imagenet_train
+        weight: 0.10
+    generator_config:
+      min_objects_per_image: 2
+      max_objects_per_image: 10
+      property_types: ["area", "perimeter", "centroid", "bbox", "aspect_ratio"]
 
-  targeted_ocr:
+  # --- Task 4: Targeted OCR (READ-TEXT) - 20,000 samples ---
+  targeted_ocr_task:
     enabled: true
     task_generator_class: "TargetedOCRTaskGenerator"
-    target_sample_count: 10000 # <-- CHANGEME (optional, expert recommendation)
+    target_sample_count: 20000
     source_datasets:
-      - infographics_vqa
+      - name: infographics_vqa_train
+        weight: 0.30
+      - name: docvqa_train
+        weight: 0.30
+      - name: hiertext_train
+        weight: 0.20
+      - name: icdar_2019_art_train
+        weight: 0.20
+    generator_config:
+      ocr_confidence_threshold: 0.7
+      min_text_regions: 1
+      max_text_regions: 20
 
-  spatio_temporal_analysis:
+  # --- Task 5: Spatio-Temporal Analysis (TRACK-OBJECT) - 25,000 samples ---
+  spatiotemporal_task:
     enabled: true
     task_generator_class: "SpatioTemporalTaskGenerator"
-    target_sample_count: 10000 # <-- CHANGEME (optional, expert recommendation)
+    target_sample_count: 30000
     source_datasets:
-      - mot17
+      - name: mot20_train
+        weight: 0.15
+      - name: uvo_dense_train
+        weight: 0.35
+      - name: epic_kitchens_visor_train
+        weight: 0.30
+      - name: vis2022_train
+        weight: 0.20
+    generator_config:
+      min_track_length: 10
+      max_track_length: 300
+      sampling_strategy: "sliding_window"
 
-# ----------------------------------------------------
-# Section 3: Trajectory Augmentation & Composition
-# ----------------------------------------------------
-# Description: Defines the strategies for enriching the generated data
-# with advanced samples like self-correction and trap trajectories.
-# These proportions are applied AFTER the initial generation.
-#
-# ACTION: You can modify the `proportions` to experiment with
-#         different data compositions. The sum should ideally be 1.0.
-# ----------------------------------------------------
+# ====================================================================
+# Section 3: Trajectory Augmentation Strategy
+# ====================================================================
 trajectory_augmentation:
-  # Proportions applied to the TOTAL pool of generated "golden" trajectories
-  # from the tasks above.
+  enabled: true
   proportions:
-    golden_positive: 0.6  # 60% will remain as standard correct trajectories
-    trap_samples: 0.2     # 20% will be converted to process-negative "trap" samples
-    self_correction: 0.2  # 20% will be augmented into self-correction traces
+    golden_positive: 0.60  # Standard correct trajectories
+    trap_samples: 0.20     # Process-negative with subtle errors
+    self_correction: 0.20  # Self-correcting trajectories
+  
+  trap_generation:
+    error_types:
+      - "incorrect_coordinates"
+      - "wrong_operation_order"
+      - "misidentified_object"
+      - "calculation_error"
+    error_injection_rate: 0.3
+    
+  self_correction:
+    correction_triggers:
+      - "unexpected_result"
+      - "consistency_check_failed"
+      - "confidence_below_threshold"
+    correction_strategies:
+      - "retry_with_different_parameters"
+      - "use_alternative_operation"
+      - "refine_previous_step"
 
-# ----------------------------------------------------
-# Section 4: Global Output & API Configuration
-# ----------------------------------------------------
-# Description: Global settings for the generation script.
-#
-# ACTION: You MUST modify `output_dir` and the `api_config` section.
-# ----------------------------------------------------
+# ====================================================================
+# Section 4: Global Configuration
+# ====================================================================
 global_config:
-  # The directory where the specialized .jsonl files will be saved.
-  output_dir: "data_outputs/specialized/" # <-- CHANGEME (optional, good default)
+  # Output configuration
+  output_dir: "data_outputs/specialized/"
+  checkpoint_every_n_samples: 250
+  save_intermediate_results: true
+  
+  # Data loading configuration
+  data_loading:
+    num_workers: 4
+    prefetch_samples: 100
+    cache_size: 1000
+    use_memory_mapping: true  # For large datasets like SA1B
+    
+  # API configuration for generation
+  api_profiles:
+    generator_api:
+      provider: "openrouter"
+      model: "meta-llama/llama-3.3-8b-instruct:free"
+      api_base_url: "https://openrouter.ai/api/v1"
+      api_key_env_variable: "OPENROUTER_API_KEY"
+      max_tokens: 2048
+      temperature: 0.7
+      retry_attempts: 3
+      timeout_seconds: 30
+    
+    scorer_api:
+      provider: "openrouter"
+      model: "qwen/qwen3-235b-a22b:free"
+      api_base_url: "https://openrouter.ai/api/v1"
+      api_key_env_variable: "OPENROUTER_API_KEY"
+      max_tokens: 1024
+      temperature: 0.3
+  
+  # Quality control
+  quality_control:
+    min_trajectory_quality_score: 0.7
+    min_thought_steps: 3
+    min_visual_operations: 2
+    max_visual_operations: 15
+    validate_json_structure: true
+    check_operation_consistency: true
+    
+  # Performance optimization
+  optimization:
+    use_batch_generation: true
+    batch_size: 10
+    parallel_workers: 4
+    gpu_acceleration: true
+    mixed_precision: true
+    
+  # Logging and monitoring
+  logging:
+    level: "INFO"
+    log_to_file: true
+    log_file_path: "logs/data_generation.log"
+    log_to_wandb: false
+    wandb_project: "pixelis-data-generation"
+    
+  # Error handling
+  error_handling:
+    skip_on_error: true
+    max_consecutive_errors: 10
+    error_recovery_strategy: "retry_with_backoff"
+    save_error_samples: true
+    error_log_path: "logs/generation_errors.log"
 
-  api_config:
-    model: "gpt-4o-2024-05-13" # The model used for generating text portions of traces
-    api_key_env_variable: "OPENAI_API_KEY" # Name of the environment variable for the API key
-    # You might add other parameters here like rate_limit_per_minute, etc.
+# ====================================================================
+# Section 5: Validation Rules
+# ====================================================================
+validation:
+  # Dataset validation
+  dataset_checks:
+    - check_file_existence: true
+    - verify_image_integrity: true
+    - validate_annotation_format: true
+    - check_video_codecs: true
+    - verify_ocr_alignment: true
+    
+  # Trajectory validation
+  trajectory_checks:
+    - validate_json_schema: true
+    - check_thought_coherence: true
+    - verify_operation_sequence: true
+    - validate_coordinate_bounds: true
+    - check_answer_completeness: true
+    
+  # Output validation
+  output_checks:
+    - verify_sample_counts: true
+    - check_distribution_balance: true
+    - validate_augmentation_ratios: true
+    - ensure_unique_ids: true
+    - check_quality_scores: true

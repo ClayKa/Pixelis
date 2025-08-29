@@ -10,7 +10,7 @@
 # ----------------------------------------------------
 # Controls the composition for Supervised Fine-Tuning
 sft_dataset_recipe:
-  target_total_samples: 60000
+  target_total_samples: 110000
   
   # Task-specific proportions (what types of visual tasks)
   task_proportions:
