@@ -9,6 +9,7 @@ import random
 from typing import Dict, Any, List, Optional, Tuple
 import logging
 from .base_generator import BaseTaskGenerator
+from .style_definitions import UNIVERSAL_STYLES, TRACKING_STYLES
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +30,14 @@ class SpatioTemporalTaskGenerator(BaseTaskGenerator):
         """Initialize the spatio-temporal task generator."""
         super().__init__(loaders, config, global_config)
         
-        # Define difficulty-specific loaders mapping
+        # [NEW] Combine universal and tracking-specific styles
+        self.styles = UNIVERSAL_STYLES + TRACKING_STYLES
+        
+        # Define difficulty-specific loaders mapping (from manifest)
         self.difficulty_loaders = {
-            'easy': ['mot17_train', 'mot20_train'],
-            'medium': ['ego4d_train', 'tao_train'],
-            'hard': ['bdd100k_train', 'waymo_open_train']
+            'easy': ['mot20_train', 'uvo_dense_train'],
+            'medium': ['epic_kitchens_visor_train'],
+            'hard': ['vis2022_train']
         }
         
         # Tracking scenarios
@@ -69,21 +73,128 @@ class SpatioTemporalTaskGenerator(BaseTaskGenerator):
         Returns:
             Dictionary mapping placeholder names to their values
         """
-        placeholders = {}
+        import json
         
-        # Build context for each difficulty level
-        placeholders.update(self._build_easy_context())
-        placeholders.update(self._build_medium_context())
-        placeholders.update(self._build_hard_context())
+        # [CRITICAL FIX] Ensure unique sample selection
+        source_datasets = ['MOT20', 'UVO Dense', 'EPIC-KITCHENS VISOR', 'VIS2022']
+        source_dataset = random.choice(source_datasets)
         
-        # Add general context
-        placeholders['task_description'] = self._generate_task_description()
-        placeholders['available_operations'] = self._get_available_operations()
-        placeholders['output_format'] = self._get_output_format()
-        placeholders['tracking_requirements'] = self._get_tracking_requirements()
+        max_attempts = 10
+        unique_sample_found = False
         
-        # Track source datasets for provenance
-        placeholders['source_datasets'] = self._get_active_datasets()
+        for attempt in range(max_attempts):
+            # Create a unique ID for this potential sample
+            video_idx = random.randint(0, 10000)
+            unique_id = f"spatiotemporal_{source_dataset}_{video_idx}"
+            
+            # Check if already used
+            if unique_id not in self.used_source_sample_ids:
+                self.used_source_sample_ids.add(unique_id)
+                unique_sample_found = True
+                logger.debug(f"Found unique spatio-temporal sample: {unique_id} (attempt {attempt + 1})")
+                break
+            else:
+                logger.debug(f"Spatio-temporal sample {unique_id} already used, trying another...")
+        
+        if not unique_sample_found:
+            logger.warning(f"Could not find unique spatio-temporal sample after {max_attempts} attempts")
+        
+        # [NEW DIVERSITY LOGIC] Randomize tracking scenario and motion pattern
+        scenario = random.choice(self.tracking_scenarios)
+        motion_pattern = random.choice(self.motion_patterns)
+        difficulty = random.choice(['easy', 'medium', 'hard'])
+        reasoning_type = random.choice(self.temporal_reasoning[difficulty])
+        
+        logger.debug(f"Spatio-temporal variation: {scenario} with {motion_pattern} ({reasoning_type})")
+        
+        # Generate video description based on scenario
+        scenario_descriptions = {
+            'single_object_tracking': [
+                "A single vehicle moving through traffic",
+                "A person walking through a crowded area",
+                "An animal moving across the field"
+            ],
+            'multi_object_tracking': [
+                "Multiple pedestrians crossing an intersection",
+                "Several players on a sports field",
+                "A group of vehicles in a parking lot"
+            ],
+            'occlusion_handling': [
+                "Objects passing behind obstacles",
+                "People walking through doorways",
+                "Vehicles passing under bridges"
+            ],
+            'interaction_analysis': [
+                "Two people having a conversation",
+                "Players passing a ball",
+                "Vehicles merging in traffic"
+            ]
+        }
+        
+        video_description = random.choice(scenario_descriptions.get(
+            scenario, 
+            ["A complex scene with multiple moving objects"]
+        ))
+        
+        # Generate task goal
+        task_goals = [
+            "Track the person in red from start to finish",
+            "Count how many times the objects cross paths",
+            "Determine when Object A enters the defined zone",
+            "Analyze the interaction between the two main subjects",
+            "Monitor the movement pattern of the tracked vehicle"
+        ]
+        task_goal = random.choice(task_goals)
+        
+        # Generate object details
+        object_A_details = {
+            "name": random.choice(["person in red shirt", "blue car", "cyclist with helmet"]),
+            "initial_mask": f"mask_for_object_{random.randint(1, 100)}"
+        }
+        
+        object_B_details = {
+            "name": random.choice(["person in blue shirt", "white van", "pedestrian with bag"]),
+            "initial_mask": f"mask_for_object_{random.randint(101, 200)}"
+        }
+        
+        # Generate spatial zone
+        spatial_zone = {
+            "zone_type": random.choice(["bounding_box", "polygon", "circle"]),
+            "coordinates": f"[{random.randint(100, 300)}, {random.randint(100, 300)}, {random.randint(400, 600)}, {random.randint(400, 600)}]"
+        }
+        
+        # Generate ground truth conclusion based on reasoning type
+        reasoning_conclusions = {
+            'object_presence': "Object A was present in frames 10-45 and 67-89",
+            'simple_counting': "Object B appeared 4 times in the video",
+            'basic_motion': "The tracked object moved from left to right",
+            'speed_estimation': "Object A maintained an average speed of 2.5 m/s",
+            'trajectory_analysis': "The object followed a curved path with 3 direction changes",
+            'event_ordering': "Event A occurred at frame 23, followed by Event B at frame 45",
+            'complex_interactions': "Objects A and B engaged in 3 distinct interaction phases",
+            'causal_reasoning': "Object A's movement triggered Object B's response at frame 34",
+            'prediction': "Based on trajectory, Object A will reach the zone in 2.3 seconds",
+            'anomaly_detection': "Unusual behavior detected at frames 56-61"
+        }
+        
+        ground_truth_conclusion = reasoning_conclusions.get(
+            reasoning_type,
+            "The tracked object completed its trajectory successfully"
+        )
+        
+        # [CRITICAL NEW LOGIC] Dynamic Style Forcing
+        chosen_style = random.choice(self.styles)
+        logger.debug(f"Selected spatio-temporal style: {chosen_style['name']}")
+        
+        placeholders = {
+            'source_dataset': source_dataset,
+            'video_description': video_description,
+            'task_goal': task_goal,
+            'ground_truth_conclusion': ground_truth_conclusion,
+            'object_A_details_json': json.dumps(object_A_details),
+            'object_B_details_json': json.dumps(object_B_details),
+            'spatial_zone_json': json.dumps(spatial_zone)
+        }
         
         return placeholders
     
@@ -91,15 +202,15 @@ class SpatioTemporalTaskGenerator(BaseTaskGenerator):
         """Build context for easy tracking tasks."""
         context = {}
         
-        # Try MOT dataset loaders
+        # Try easy dataset loaders from manifest (MOT20, UVO)
         loader = None
-        for loader_name in ['mot17_train', 'mot20_train', 'mot_challenge_train']:
+        for loader_name in ['mot20_train', 'uvo_dense_train']:
             if loader_name in self.loaders:
                 loader = self.loaders[loader_name]
                 break
         
         if not loader:
-            logger.warning("No easy tracking loader available, using mock data")
+            logger.warning("Datasources 'mot20_train' and 'uvo_dense_train' not found for Easy difficulty. Check manifest.")
             return self._build_mock_easy_context()
         
         try:
@@ -107,7 +218,7 @@ class SpatioTemporalTaskGenerator(BaseTaskGenerator):
             sample = loader.get_item(random.randint(0, min(100, len(loader) - 1)))
             
             # Build easy tracking context
-            context['easy_source_dataset'] = 'MOT Challenge'
+            context['easy_source_dataset'] = loader_name.replace('_', ' ').title()
             context['easy_video_description'] = self._describe_video_scene('easy', sample)
             context['easy_num_frames'] = str(random.randint(30, 60))
             context['easy_fps'] = str(random.choice([15, 24, 30]))
@@ -141,15 +252,15 @@ class SpatioTemporalTaskGenerator(BaseTaskGenerator):
         """Build context for medium difficulty tracking tasks."""
         context = {}
         
-        # Try Ego4D or TAO loaders
+        # Try medium dataset loaders from manifest (EPIC-KITCHENS)
         loader = None
-        for loader_name in ['ego4d_train', 'tao_train', 'youtube_vis_train']:
+        for loader_name in ['epic_kitchens_visor_train']:
             if loader_name in self.loaders:
                 loader = self.loaders[loader_name]
                 break
         
         if not loader:
-            logger.warning("No medium tracking loader available, using mock data")
+            logger.warning("Datasource 'epic_kitchens_visor_train' not found for Medium difficulty. Check manifest.")
             return self._build_mock_medium_context()
         
         try:
@@ -205,27 +316,22 @@ class SpatioTemporalTaskGenerator(BaseTaskGenerator):
         """Build context for hard tracking tasks."""
         context = {}
         
-        # Try complex dataset loaders
+        # Try hard dataset loaders from manifest (VIS2022)
         loader = None
-        for loader_name in ['bdd100k_train', 'waymo_open_train', 'nuscenes_train']:
+        for loader_name in ['vis2022_train']:
             if loader_name in self.loaders:
                 loader = self.loaders[loader_name]
                 break
         
         if not loader:
-            # Fallback to any video loader
-            video_loaders = [k for k in self.loaders.keys() if 'video' in k.lower() or 'mot' in k.lower()]
-            if video_loaders:
-                loader = self.loaders[video_loaders[0]]
-            else:
-                logger.warning("No hard tracking loader available, using mock data")
-                return self._build_mock_hard_context()
+            logger.warning("Datasource 'vis2022_train' not found for Hard difficulty. Check manifest.")
+            return self._build_mock_hard_context()
         
         try:
             sample = loader.get_item(random.randint(0, min(100, len(loader) - 1)))
             
             # Build hard tracking context
-            context['hard_source_dataset'] = 'BDD100K/Waymo'
+            context['hard_source_dataset'] = loader_name.replace('_', ' ').title()
             context['hard_scenario_complexity'] = random.choice([
                 'dense urban traffic with 50+ objects',
                 'nighttime/adverse weather conditions',

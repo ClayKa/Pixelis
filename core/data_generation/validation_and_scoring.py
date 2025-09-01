@@ -246,6 +246,101 @@ class StructuralValidator(Validator):
                             message=f"Unknown operation: {op['operation']}",
                             suggestion=f"Use one of: {valid_ops}"
                         ))
+                    else:
+                        # Validate operation parameters based on operation type
+                        operation_name = op["operation"]
+                        params = op.get("params") or op.get("parameters")
+                        
+                        # Define required parameters for each operation
+                        required_params = {
+                            "ZOOM_IN": ["bbox"],  # Requires bounding box
+                            "SEGMENT_OBJECT_AT": ["point", "coordinates"],  # Requires point OR coordinates
+                            "TRACK_OBJECT": ["object_id", "start_frame", "end_frame"],
+                            "SELECT_FRAME": ["frame_num"],
+                            "READ_TEXT": ["bbox", "region"],  # Requires bbox OR region
+                            "GET_PROPERTIES": []  # Optional params
+                        }
+                        
+                        if operation_name in required_params and required_params[operation_name]:
+                            if not params or not isinstance(params, dict):
+                                result.add_issue(ValidationIssue(
+                                    issue_type=IssueType.MISSING_FIELD,
+                                    severity="error",
+                                    field=f"visual_operations[{i}].params",
+                                    message=f"Operation '{operation_name}' requires parameters but none provided",
+                                    suggestion=f"Add 'params' dict with required fields: {required_params[operation_name]}"
+                                ))
+                            else:
+                                # Check specific parameter requirements
+                                if operation_name == "ZOOM_IN":
+                                    if "bbox" not in params:
+                                        result.add_issue(ValidationIssue(
+                                            issue_type=IssueType.MISSING_FIELD,
+                                            severity="error",
+                                            field=f"visual_operations[{i}].params.bbox",
+                                            message=f"ZOOM_IN operation missing required 'bbox' parameter",
+                                            suggestion="Add 'bbox' as [x1, y1, x2, y2]"
+                                        ))
+                                    elif not isinstance(params["bbox"], list) or len(params["bbox"]) != 4:
+                                        result.add_issue(ValidationIssue(
+                                            issue_type=IssueType.INVALID_FORMAT,
+                                            severity="error",
+                                            field=f"visual_operations[{i}].params.bbox",
+                                            message=f"'bbox' must be a list of 4 coordinates",
+                                            suggestion="Format bbox as [x1, y1, x2, y2]"
+                                        ))
+                                
+                                elif operation_name == "SEGMENT_OBJECT_AT":
+                                    # Requires either 'point' or 'coordinates'
+                                    point = params.get("point") or params.get("coordinates")
+                                    if not point:
+                                        result.add_issue(ValidationIssue(
+                                            issue_type=IssueType.MISSING_FIELD,
+                                            severity="error",
+                                            field=f"visual_operations[{i}].params",
+                                            message=f"SEGMENT_OBJECT_AT requires 'point' or 'coordinates' parameter",
+                                            suggestion="Add 'point' as [x, y]"
+                                        ))
+                                    elif not isinstance(point, list) or len(point) != 2:
+                                        result.add_issue(ValidationIssue(
+                                            issue_type=IssueType.INVALID_FORMAT,
+                                            severity="error",
+                                            field=f"visual_operations[{i}].params.point",
+                                            message=f"'point' must be a list of 2 coordinates",
+                                            suggestion="Format point as [x, y]"
+                                        ))
+                                
+                                elif operation_name == "TRACK_OBJECT":
+                                    for param in ["object_id", "start_frame", "end_frame"]:
+                                        if param not in params:
+                                            result.add_issue(ValidationIssue(
+                                                issue_type=IssueType.MISSING_FIELD,
+                                                severity="error",
+                                                field=f"visual_operations[{i}].params.{param}",
+                                                message=f"TRACK_OBJECT missing required '{param}' parameter",
+                                                suggestion=f"Add '{param}' to params"
+                                            ))
+                                
+                                elif operation_name == "SELECT_FRAME":
+                                    if "frame_num" not in params:
+                                        result.add_issue(ValidationIssue(
+                                            issue_type=IssueType.MISSING_FIELD,
+                                            severity="error",
+                                            field=f"visual_operations[{i}].params.frame_num",
+                                            message=f"SELECT_FRAME missing required 'frame_num' parameter",
+                                            suggestion="Add 'frame_num' to params"
+                                        ))
+                                
+                                elif operation_name == "READ_TEXT":
+                                    # Requires either 'bbox' or 'region'
+                                    if "bbox" not in params and "region" not in params:
+                                        result.add_issue(ValidationIssue(
+                                            issue_type=IssueType.MISSING_FIELD,
+                                            severity="error",
+                                            field=f"visual_operations[{i}].params",
+                                            message=f"READ_TEXT requires 'bbox' or 'region' parameter",
+                                            suggestion="Add 'bbox' as [x1, y1, x2, y2] or 'region' identifier"
+                                        ))
         
         # Check ID uniqueness format
         if "id" in trajectory:
@@ -718,6 +813,127 @@ class ValidationPipeline:
             results.append(result)
         
         return results
+    
+    def validate_structure(self, trajectory: Dict[str, Any]) -> bool:
+        """Validate only the structural integrity of a trajectory
+        
+        This is a convenience method for backward compatibility.
+        It only runs the structural validator and returns a boolean.
+        Supports both old and new trajectory formats.
+        
+        Args:
+            trajectory: The trajectory to validate
+            
+        Returns:
+            bool: True if structurally valid, False otherwise
+        """
+        # Convert old format to new format if needed
+        normalized_trajectory = self._normalize_trajectory_format(trajectory)
+        
+        # Create a structural validator
+        structural_validator = StructuralValidator(self.level)
+        result = structural_validator.validate(normalized_trajectory)
+        return result.is_valid
+    
+    def _normalize_trajectory_format(self, trajectory: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize trajectory format to support multiple input formats.
+        
+        Converts old format (with steps) to new format (with chain_of_thought and visual_operations).
+        
+        Args:
+            trajectory: Input trajectory in any supported format
+            
+        Returns:
+            Normalized trajectory in the expected format
+        """
+        # If it already has the expected fields, return as-is
+        if all(field in trajectory for field in ['id', 'task', 'chain_of_thought', 'visual_operations', 'answer']):
+            return trajectory
+        
+        # Convert from old format to new format
+        normalized = {}
+        
+        # Map trajectory_id -> id
+        normalized['id'] = trajectory.get('trajectory_id', trajectory.get('id', f"traj_{hash(str(trajectory))}"[:8]))
+        
+        # Map task_type -> task
+        normalized['task'] = trajectory.get('task_type', trajectory.get('task', 'unknown'))
+        
+        # Convert steps to chain_of_thought and visual_operations
+        if 'steps' in trajectory:
+            steps = trajectory['steps']
+            chain_of_thought = []
+            visual_operations = []
+            
+            for step in steps:
+                # Add to chain of thought
+                thought = {
+                    'thought': step.get('reasoning', ''),
+                    'type': 'execution',
+                    'confidence': 0.9
+                }
+                if 'observation' in step:
+                    thought['observation'] = step['observation']
+                chain_of_thought.append(thought)
+                
+                # Add to visual operations
+                if 'action' in step:
+                    operation = {
+                        'operation': step['action'],
+                        'params': step.get('action_params', {}),
+                        'output': step.get('observation', '')
+                    }
+                    visual_operations.append(operation)
+            
+            normalized['chain_of_thought'] = chain_of_thought
+            normalized['visual_operations'] = visual_operations
+        else:
+            # Use existing fields if available
+            normalized['chain_of_thought'] = trajectory.get('chain_of_thought', [])
+            normalized['visual_operations'] = trajectory.get('visual_operations', [])
+        
+        # Map final_answer -> answer
+        normalized['answer'] = trajectory.get('final_answer', trajectory.get('answer', ''))
+        
+        # Copy over metadata and other fields
+        normalized['type'] = trajectory.get('type', 'golden_positive')
+        normalized['difficulty'] = trajectory.get('difficulty', trajectory.get('metadata', {}).get('difficulty', 'medium'))
+        normalized['metadata'] = trajectory.get('metadata', {})
+        
+        return normalized
+    
+    def calculate_quality_score(self, trajectory: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate quality scores for a trajectory
+        
+        This is a convenience method for backward compatibility.
+        It returns quality scores without full validation.
+        Supports both old and new trajectory formats.
+        
+        Args:
+            trajectory: The trajectory to score
+            
+        Returns:
+            Dict containing quality scores and overall score
+        """
+        # Convert old format to new format if needed
+        normalized_trajectory = self._normalize_trajectory_format(trajectory)
+        
+        # Score the trajectory
+        quality_scores = self.scorer.score(normalized_trajectory)
+        
+        # Calculate overall score
+        weights = self.scorer.get_weights()
+        overall = sum(
+            score * weights.get(dim, 0)
+            for dim, score in quality_scores.items()
+        )
+        
+        # Return in expected format
+        return {
+            'overall_score': overall,
+            'dimension_scores': {dim.value: score for dim, score in quality_scores.items()},
+            'weights': {dim.value: weight for dim, weight in weights.items()}
+        }
     
     def _update_stats(self, result: ValidationResult):
         """Update validation statistics"""

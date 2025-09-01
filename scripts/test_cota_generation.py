@@ -81,10 +81,11 @@ def create_mock_config() -> Dict[str, Any]:
         },
         'tasks': {
             'geometric_comparison_task': {
+                'name': 'geometric_comparison_task',
                 'enabled': True,
                 'generator_class': 'GeometricComparisonTaskGenerator',
                 'target_sample_count': 10,
-                'prompt_template': 'prompts/geometric_reasoning.txt',
+                'prompt_template': 'prompts/geometric_reasoning.md',
                 'data_sources': ['coco2017_train'],
                 'generator_params': {
                     'min_objects': 2,
@@ -92,10 +93,11 @@ def create_mock_config() -> Dict[str, Any]:
                 }
             },
             'detail_perception_task': {
+                'name': 'detail_perception_task',
                 'enabled': True,
                 'generator_class': 'DetailPerceptionTaskGenerator', 
                 'target_sample_count': 10,
-                'prompt_template': 'prompts/zoom_in.txt',
+                'prompt_template': 'prompts/detail_perception.md',
                 'data_sources': ['sa1b_for_zoomin'],
                 'generator_params': {
                     'zoom_levels': [2, 4, 8],

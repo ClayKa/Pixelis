@@ -165,7 +165,8 @@ tasks:
   detail_perception_task:
     enabled: true
     task_generator_class: "DetailPerceptionTaskGenerator"
-    target_sample_count: 15000
+    prompt_template: "prompts/detail_perception.md"
+    target_sample_count: 10000
     source_datasets:
       - name: sa1b_for_zoomin
         weight: 0.45
@@ -180,15 +181,16 @@ tasks:
     generator_config:
       difficulty_distribution:
         easy: 0.3
-        medium: 0.5
-        hard: 0.2
+        medium: 0.4
+        hard: 0.3
       use_mock_if_missing: true
 
   # --- Task 2: Frame Selection (SELECT-FRAME) - 15,000 samples ---
   select_frame_task:
     enabled: true
     task_generator_class: "SelectFrameTaskGenerator"
-    target_sample_count: 20000
+    prompt_template: "prompts/temporal_localization.md"
+    target_sample_count: 10000
     source_datasets:
       - name: starqa_train
         weight: 0.40
@@ -201,6 +203,10 @@ tasks:
       - name: assembly101_train
         weight: 0.10
     generator_config:
+      difficulty_distribution:
+        easy: 0.3
+        medium: 0.4
+        hard: 0.3
       max_frames_per_video: 100
       frame_sampling_rate: 5
 
@@ -208,6 +214,7 @@ tasks:
   geometric_comparison_task:
     enabled: true
     task_generator_class: "GeometricComparisonTaskGenerator"
+    prompt_template: "prompts/geometric_reasoning.md"
     target_sample_count: 25000
     source_datasets:
       - name: coco2017_train
@@ -219,6 +226,10 @@ tasks:
       - name: part_imagenet_train
         weight: 0.10
     generator_config:
+      difficulty_distribution:
+        easy: 0.3
+        medium: 0.4
+        hard: 0.3
       min_objects_per_image: 2
       max_objects_per_image: 10
       property_types: ["area", "perimeter", "centroid", "bbox", "aspect_ratio"]
@@ -227,6 +238,7 @@ tasks:
   targeted_ocr_task:
     enabled: true
     task_generator_class: "TargetedOCRTaskGenerator"
+    prompt_template: "prompts/contextual_reading_task.md"
     target_sample_count: 20000
     source_datasets:
       - name: infographics_vqa_train
@@ -238,6 +250,10 @@ tasks:
       - name: icdar_2019_art_train
         weight: 0.20
     generator_config:
+      difficulty_distribution:
+        easy: 0.3
+        medium: 0.4
+        hard: 0.3
       ocr_confidence_threshold: 0.7
       min_text_regions: 1
       max_text_regions: 20
@@ -246,7 +262,8 @@ tasks:
   spatiotemporal_task:
     enabled: true
     task_generator_class: "SpatioTemporalTaskGenerator"
-    target_sample_count: 30000
+    prompt_template: "prompts/spatio_temporal_tracking_task.md"
+    target_sample_count: 25000
     source_datasets:
       - name: mot20_train
         weight: 0.15
@@ -257,6 +274,10 @@ tasks:
       - name: vis2022_train
         weight: 0.20
     generator_config:
+      difficulty_distribution:
+        easy: 0.3
+        medium: 0.4
+        hard: 0.3
       min_track_length: 10
       max_track_length: 300
       sampling_strategy: "sliding_window"
@@ -294,7 +315,7 @@ trajectory_augmentation:
 # ====================================================================
 global_config:
   # Output configuration
-  output_dir: "data_outputs/specialized/"
+  output_dir: "data_outputs/"
   checkpoint_every_n_samples: 250
   save_intermediate_results: true
   
@@ -309,7 +330,7 @@ global_config:
   api_profiles:
     generator_api:
       provider: "openrouter"
-      model: "meta-llama/llama-3.3-8b-instruct:free"
+      model: "openai/gpt-5-nano"
       api_base_url: "https://openrouter.ai/api/v1"
       api_key_env_variable: "OPENROUTER_API_KEY"
       max_tokens: 2048

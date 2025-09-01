@@ -9,6 +9,7 @@ generation orchestration, checkpointing, and error handling.
 import json
 import time
 import random
+import re
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -57,14 +58,29 @@ class BaseTaskGenerator(ABC):
         self.task_name = self.config.get('name', 'unknown_task')
         self.generator_params = self.config.get('generator_params', {})
         
+        # Configure validation strictness (default: strict for better data quality)
+        self.validation_strictness = self.config.get('generator_config', {}).get('validation_strictness', 'strict')
+        # Options: 'strict', 'standard', 'lenient', 'ultra_lenient'
+        logger.info(f"Validation strictness set to: {self.validation_strictness}")
+        
         # Initialize core components
         self.prompt_template = self._load_prompt_template()
         self.api_client = self._initialize_api_client()
+        
+        # [REVISED] The base class ONLY loads the raw template text.
+        # It does not parse any special blocks within it.
+        # Subclasses are responsible for their own prompt-specific parsing.
         
         # Statistics tracking
         self.generation_stats = defaultdict(int)
         self.start_time = None
         
+        # [NEW] Track used source samples to guarantee uniqueness
+        self.used_source_sample_ids = set()
+        
+        # [NEW] Support for continuation mode (when called multiple times)
+        self.continuation_mode = False
+    
     def _load_prompt_template(self) -> str:
         """
         Load the prompt template from the configured file.
@@ -94,51 +110,202 @@ class BaseTaskGenerator(ABC):
     
     def _initialize_api_client(self) -> openai.OpenAI:
         """
-        Initialize the OpenAI-compatible API client.
-        
-        Returns:
-            Configured OpenAI client instance
+        Initializes the API client and verifies the API key presence.
         """
         # Get API configuration from global config
         api_profile = self.global_config.get('api_profiles', {}).get('generator_api', {})
+        api_key_env_var = api_profile.get('api_key_env_variable', 'OPENROUTER_API_KEY')
         
-        # Support both environment variables and config file
-        api_key = api_profile.get('api_key') or os.getenv('OPENROUTER_API_KEY')
-        base_url = api_profile.get('base_url', 'https://openrouter.ai/api/v1')
+        # Get API key from environment
+        api_key = os.getenv(api_key_env_var)
         
+        # [DEBUG LOG 1] Verify that the API key was found in the environment.
         if not api_key:
-            logger.warning(
-                "No API key found. Set OPENROUTER_API_KEY env var or configure in manifest. "
-                "Using mock mode for development."
-            )
+            logger.error(f"CRITICAL: API key environment variable '{api_key_env_var}' is not set or is empty!")
+            logger.warning("Using mock mode for development since no API key is available.")
             return None  # Will trigger mock mode in _call_llm_api
+        else:
+            logger.info(f"API Key '{api_key_env_var}' found and loaded successfully.")
+        
+        base_url = api_profile.get('api_base_url', 'https://openrouter.ai/api/v1')
         
         client = openai.OpenAI(
+            base_url=base_url,
             api_key=api_key,
-            base_url=base_url
+            default_headers={"HTTP-Referer": "http://localhost", "X-Title": "Pixelis Project"},
         )
         
         logger.info(f"Initialized API client for '{self.task_name}' with base URL: {base_url}")
         return client
     
     @abstractmethod
-    def _build_context_placeholders(self) -> Dict[str, str]:
+    def _build_context_placeholders(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """
+        [REVISED SIGNATURE]
         Build the context placeholders for the prompt template.
         
-        This method must be implemented by each specialized generator to sample
-        from data loaders and construct the task-specific context.
+        Subclasses must now return a tuple:
+        1. The dictionary of placeholders for the prompt.
+        2. A dictionary of initial metadata for the sample.
         
         Returns:
-            Dictionary mapping placeholder names to their values
+            Tuple of (placeholders_dict, metadata_dict)
         """
         raise NotImplementedError(
             f"{self.__class__.__name__} must implement _build_context_placeholders()"
         )
     
-    def _call_llm_api(self, prompt: str, attempt: int = 1) -> Dict[str, Any]:
+    def _normalize_trajectory(self, trajectory: List[Dict]) -> List[Dict]:
         """
-        Call the LLM API with retry logic and error handling.
+        Normalizes trajectory steps to handle various formats from different LLMs.
+        This ensures consistent structure regardless of how the LLM formatted its response.
+        
+        Args:
+            trajectory: List of trajectory steps in various possible formats
+            
+        Returns:
+            Normalized trajectory with consistent structure
+        """
+        normalized_traj = []
+        
+        for step in trajectory:
+            if not isinstance(step, dict):
+                logger.debug(f"Skipping non-dict step: {type(step)}")
+                continue
+                
+            new_step = {}
+            
+            # Normalize step type
+            if 'type' in step:
+                new_step['type'] = step['type'].lower() if isinstance(step['type'], str) else step['type']
+            elif 'step' in step and isinstance(step['step'], str):
+                new_step['type'] = step['step'].lower()
+            elif 'step_type' in step:
+                new_step['type'] = step['step_type'].lower()
+            elif 'THOUGHT' in step:
+                new_step['type'] = 'thought'
+            elif 'ACTION' in step:
+                new_step['type'] = 'action'
+            elif 'action' in step:  # Direct action field
+                new_step['type'] = 'action'
+            elif 'thought' in step:  # Direct thought field
+                new_step['type'] = 'thought'
+            else:
+                # Try to infer from content
+                if any(key in step for key in ['name', 'operation', 'command']):
+                    new_step['type'] = 'action'
+                elif any(key in step for key in ['content', 'text', 'description']):
+                    new_step['type'] = 'thought'
+                else:
+                    logger.debug(f"Cannot determine type for step: {step}")
+                    continue  # Skip malformed step
+            
+            # Normalize content for thoughts
+            if new_step['type'] == 'thought':
+                if 'content' in step:
+                    new_step['content'] = step['content']
+                elif 'text' in step:
+                    new_step['content'] = step['text']
+                elif 'description' in step:
+                    new_step['content'] = step['description']
+                elif 'THOUGHT' in step:
+                    new_step['content'] = step['THOUGHT']
+                elif 'thought' in step:
+                    new_step['content'] = step['thought']
+                elif 'message' in step:
+                    new_step['content'] = step['message']
+                else:
+                    # Try to extract any string value
+                    for key, value in step.items():
+                        if isinstance(value, str) and key not in ['type', 'step', 'step_type']:
+                            new_step['content'] = value
+                            break
+            
+            # Normalize action details
+            if new_step['type'] == 'action':
+                # Normalize action name
+                if 'name' in step:
+                    new_step['name'] = step['name']
+                elif 'action' in step:
+                    # Could be the action name or a nested dict
+                    if isinstance(step['action'], str):
+                        new_step['name'] = step['action']
+                    elif isinstance(step['action'], dict) and 'name' in step['action']:
+                        new_step['name'] = step['action']['name']
+                        # Also extract parameters from nested structure
+                        if 'parameters' in step['action']:
+                            new_step['parameters'] = step['action']['parameters']
+                elif 'ACTION' in step:
+                    if isinstance(step['ACTION'], str):
+                        new_step['name'] = step['ACTION']
+                    elif isinstance(step['ACTION'], dict):
+                        new_step['name'] = step['ACTION'].get('name', 'unknown')
+                        new_step['parameters'] = step['ACTION'].get('parameters', {})
+                elif 'operation' in step:
+                    new_step['name'] = step['operation']
+                elif 'command' in step:
+                    new_step['name'] = step['command']
+                
+                # Normalize parameters
+                if 'parameters' not in new_step:
+                    if 'parameters' in step:
+                        new_step['parameters'] = step['parameters']
+                    elif 'params' in step:
+                        new_step['parameters'] = step['params']
+                    elif 'args' in step:
+                        new_step['parameters'] = step['args']
+                    elif 'arguments' in step:
+                        new_step['parameters'] = step['arguments']
+                    else:
+                        # Extract any dict that looks like parameters
+                        for key, value in step.items():
+                            if isinstance(value, dict) and key not in ['type', 'action', 'ACTION']:
+                                new_step['parameters'] = value
+                                break
+                        else:
+                            new_step['parameters'] = {}
+                
+                # Add observation if present
+                if 'observation' in step:
+                    new_step['observation'] = step['observation']
+                elif 'result' in step:
+                    new_step['observation'] = step['result']
+                elif 'output' in step:
+                    new_step['observation'] = step['output']
+                elif 'response' in step:
+                    new_step['observation'] = step['response']
+            
+            # Only add the step if it has meaningful content
+            if new_step.get('type') == 'thought' and 'content' in new_step:
+                normalized_traj.append(new_step)
+            elif new_step.get('type') == 'action' and 'name' in new_step:
+                normalized_traj.append(new_step)
+            else:
+                logger.debug(f"Skipping incomplete step: {new_step}")
+        
+        return normalized_traj
+    
+    @abstractmethod
+    def _validate_and_process_response(self, llm_response: Dict, context: Dict) -> Optional[Dict]:
+        """
+        [NEW ABSTRACT METHOD]
+        Subclasses must implement this to validate the LLM's JSON output
+        and process it into the final CoTA sample format.
+        
+        Args:
+            llm_response: The raw JSON response from the LLM
+            context: The context placeholders used for generation
+            
+        Returns:
+            The final, validated CoTA sample dict, or None if validation fails.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} must implement _validate_and_process_response()"
+        )
+    
+    def _call_llm_api(self, prompt: str, attempt: int = 1, context_placeholders: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        Calls the configured LLM API with extensive debugging and robust parsing.
         
         Args:
             prompt: The formatted prompt to send
@@ -150,258 +317,299 @@ class BaseTaskGenerator(ABC):
         Raises:
             Exception: After max retries are exhausted
         """
+        logger.info("--- Preparing to call LLM API ---")
+        raw_response_content = "Error: Response was not captured." # Default error message
+        
         max_retries = self.generator_params.get('max_retries', 3)
         retry_delay = self.generator_params.get('retry_delay', 2.0)
         
         # Mock mode for development/testing
         if self.api_client is None:
-            return self._generate_mock_response()
+            logger.debug("API client is None, using mock mode")
+            return self._generate_mock_response(context_placeholders)
         
         try:
-            # Prepare API call parameters
-            model = self.generator_params.get('model', 'meta-llama/llama-3.2-90b-vision-instruct')
-            temperature = self.generator_params.get('temperature', 0.7)
-            max_tokens = self.generator_params.get('max_tokens', 4096)
+            # Get API configuration
+            api_profile = self.global_config.get('api_profiles', {}).get('generator_api', {})
+            model_to_use = api_profile.get('model', 'meta-llama/llama-3.3-8b-instruct:free')
             
-            # Make the API call
-            response = self.api_client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that generates structured CoTA trajectories in JSON format."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=temperature,
-                max_tokens=max_tokens,
-                response_format={"type": "json_object"}  # Force JSON output
-            )
+            # [DEBUG LOG 2] Log the exact payload being sent to the API.
+            payload = {
+                "model": model_to_use,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": api_profile.get("temperature", 0.7),
+                "max_tokens": api_profile.get("max_tokens", 2048)
+            }
+            logger.debug(f"API Request Payload:\n{json.dumps(payload, indent=2)}")
             
-            # Extract and parse response
-            response_content = response.choices[0].message.content
+            # Make the actual API call
+            response = self.api_client.chat.completions.create(**payload)
             
-            # Try to parse JSON
-            try:
-                parsed_response = json.loads(response_content)
-                self.generation_stats['api_calls_successful'] += 1
-                return parsed_response
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON response: {e}")
-                logger.debug(f"Raw response: {response_content[:500]}...")
-                raise
-                
+            # [DEBUG LOG 3] Log the full, successful Pydantic response object.
+            # This shows us exactly what the server returned on success.
+            logger.debug(f"Full API Response Object (Success):\n{response.model_dump_json(indent=2)}")
+            
+            raw_response_content = response.choices[0].message.content
+            
         except Exception as e:
-            self.generation_stats['api_calls_failed'] += 1
+            # [DEBUG LOG 4 - CRITICAL] Log the specific error type and details.
+            # This will capture AuthenticationError, RateLimitError, etc.
+            logger.error(f"!!! API call to model '{model_to_use}' FAILED !!!")
+            logger.error(f"Error Type: {type(e).__name__}")
+            logger.error(f"Error Details: {e}")
             
+            # Retry logic
             if attempt < max_retries:
                 logger.warning(
-                    f"API call failed (attempt {attempt}/{max_retries}): {e}. "
+                    f"API call failed (attempt {attempt}/{max_retries}). "
                     f"Retrying in {retry_delay} seconds..."
                 )
                 time.sleep(retry_delay * attempt)  # Exponential backoff
-                return self._call_llm_api(prompt, attempt + 1)
+                return self._call_llm_api(prompt, attempt + 1, context_placeholders)
             else:
-                logger.error(f"API call failed after {max_retries} attempts: {e}")
-                raise
+                logger.error(f"API call failed after {max_retries} attempts")
+                raise # Re-raise to mark the sample as failed
+        
+        # --- Robust JSON Parsing ---
+        try:
+            json_match = re.search(r'\{.*\}', raw_response_content, re.DOTALL)
+            if not json_match:
+                raise ValueError("No valid JSON object found in the LLM response.")
+            json_string = json_match.group(0)
+            parsed_response = json.loads(json_string)
+            self.generation_stats['api_calls_successful'] += 1
+            return parsed_response
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"Failed to parse JSON from a successful API response. Error: {e}")
+            # [DEBUG LOG 5] Log the raw text content that failed to parse.
+            logger.error(f"Raw response content that caused parsing error:\n---\n{raw_response_content}\n---")
+            raise
     
-    def _generate_mock_response(self) -> Dict[str, Any]:
+    def _generate_mock_response(self, context_placeholders: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         Generate a mock response for development/testing.
         
+        Args:
+            context_placeholders: Optional context with ground truth
+            
         Returns:
             Mock CoTA trajectory in the expected format
         """
-        return {
-            "task_id": f"mock_{self.task_name}_{random.randint(1000, 9999)}",
-            "difficulty": random.choice(["easy", "medium", "hard"]),
-            "trajectory": [
-                {
-                    "step": 1,
-                    "thought": "Mock thought process",
-                    "action": "ZOOM_IN",
-                    "parameters": {"coordinates": [100, 100, 200, 200]},
-                    "result": "Mock result"
+        # Generate a mock question based on the task
+        questions = [
+            "What detail can you see in the specified area?",
+            "Is there something specific in this region?",
+            "Can you identify what's in the zoomed area?",
+            "What object is visible at this location?"
+        ]
+        question = random.choice(questions)
+        
+        # Use ground truth if available, otherwise use default mock answer
+        final_answer = "A detail is visible in the specified area"
+        if context_placeholders and 'ground_truth_answer' in context_placeholders:
+            ground_truth = context_placeholders['ground_truth_answer']
+            # Sometimes return exact match, sometimes return variation to test flexible validation
+            variations = [
+                ground_truth,  # Exact match
+                f"Yes, {ground_truth.lower()}",  # Answer with prefix
+                f"The answer is: {ground_truth}",  # Answer with explanation
+                f"I can see {ground_truth} in the image",  # Contextual answer
+            ]
+            final_answer = random.choice(variations)
+            logger.debug(f"Mock generator ground truth: '{ground_truth}' -> generated: '{final_answer}'")
+        
+        # Get difficulty from context or random
+        difficulty = "Easy"
+        if context_placeholders and 'difficulty' in context_placeholders:
+            difficulty = context_placeholders['difficulty']
+        
+        # Get bbox from context or use default
+        bbox = [100, 100, 200, 200]
+        if context_placeholders and 'bbox' in context_placeholders:
+            bbox_str = context_placeholders['bbox']
+            # Parse bbox string if needed
+            if isinstance(bbox_str, str) and bbox_str.startswith('['):
+                try:
+                    import ast
+                    bbox = ast.literal_eval(bbox_str)
+                except:
+                    pass
+        
+        # Generate proper trajectory structure matching the prompt format
+        trajectory = [
+            {
+                "type": "thought",
+                "content": "I need to examine the specified area to find the detail. Let me zoom in to get a clearer view."
+            },
+            {
+                "type": "action",
+                "name": "ZOOM-IN",
+                "parameters": {
+                    "bbox": bbox
                 }
-            ],
-            "final_answer": "Mock answer",
+            },
+            {
+                "type": "thought",
+                "content": f"The zoom was successful. I can now see the detail clearly. The observation is: {final_answer}"
+            }
+        ]
+        
+        return {
+            "question": question,
+            "difficulty": difficulty,
+            "trajectory": trajectory,
+            "final_answer": final_answer,
             "metadata": {
                 "generated_at": datetime.now().isoformat(),
-                "is_mock": True
+                "is_mock": True,
+                "task_name": self.task_name
             }
         }
     
-    def _add_provenance(self, sample: Dict[str, Any], context_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _finalize_metadata(self, cota_sample: Dict[str, Any], initial_metadata: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Add provenance metadata to a generated sample.
+        Combines initial metadata from the subclass with global generator metadata.
         
         Args:
-            sample: The generated CoTA sample
-            context_data: Context information used for generation
+            cota_sample: The generated CoTA sample
+            initial_metadata: Metadata from the specific task generator
             
         Returns:
-            Sample with added provenance metadata
+            Sample with finalized metadata
         """
-        # Generate unique ID for this sample
-        sample_id = hashlib.sha256(
-            f"{self.task_name}_{datetime.now().isoformat()}_{random.random()}".encode()
-        ).hexdigest()[:16]
+        # Start with the specific metadata from the generator
+        final_metadata = initial_metadata.copy()
         
-        provenance = {
-            "sample_id": sample_id,
-            "task_name": self.task_name,
-            "generator_class": self.__class__.__name__,
-            "generated_at": datetime.now().isoformat(),
-            "model": self.generator_params.get('model', 'unknown'),
-            "temperature": self.generator_params.get('temperature', 0.7),
-            "data_sources": list(context_data.get('source_datasets', [])),
-            "generator_version": "1.0.0"
-        }
+        # Add global metadata from the base class
+        api_profile = self.global_config.get('api_profiles', {}).get('generator_api', {})
         
-        sample['provenance'] = provenance
-        return sample
+        final_metadata.update({
+            'task_name': self.task_name,
+            'llm_model_used': api_profile.get('model', 'unknown'),
+            'temperature': api_profile.get('temperature', 0.7)
+        })
+        
+        # Ensure the sample has a metadata key and update it
+        if 'metadata' not in cota_sample:
+            cota_sample['metadata'] = {}
+        
+        cota_sample['metadata'].update(final_metadata)
+        
+        return cota_sample
     
-    def generate(self, num_samples: int, checkpoint_path: Path) -> List[Dict]:
+    
+    def generate(self, num_samples: int) -> List[Dict]:
         """
-        Main generation method orchestrating the entire process.
+        [REVISED - STATELESS]
+        Generates a requested number of new samples without handling checkpoints.
+        The method focuses purely on generation and validation, leaving state
+        management to the caller.
         
         Args:
-            num_samples: Number of samples to generate
-            checkpoint_path: Path to save/load checkpoints
+            num_samples: Number of samples to attempt generating
             
         Returns:
-            List of generated CoTA samples
+            List of valid CoTA samples (may be less than num_samples if some fail)
         """
-        generated_samples = []
+        newly_generated_samples = []
         self.start_time = time.time()
         
-        # Ensure checkpoint directory exists
-        checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Load from checkpoint if exists
-        if checkpoint_path.exists():
-            try:
-                with open(checkpoint_path, 'r') as f:
-                    for line in f:
-                        generated_samples.append(json.loads(line.strip()))
-                logger.info(
-                    f"Resumed from checkpoint: {len(generated_samples)}/{num_samples} "
-                    f"samples for '{self.task_name}'"
-                )
-            except Exception as e:
-                logger.error(f"Failed to load checkpoint: {e}. Starting fresh.")
-                generated_samples = []
-        
-        # Setup progress bar
-        start_index = len(generated_samples)
+        # Simple progress bar for generation attempts
         pbar = tqdm(
-            range(start_index, num_samples),
-            desc=f"Generating {self.task_name}",
-            initial=start_index,
-            total=num_samples
+            range(num_samples),
+            desc=f"Generating NEW '{self.task_name}'"
         )
         
-        # Main generation loop
-        checkpoint_interval = self.global_config.get('checkpoint_every_n_samples', 100)
-        
+        # Main generation loop - simple iteration
         for i in pbar:
-            try:
-                # Build context for this sample
-                context_placeholders = self._build_context_placeholders()
-                
-                # Format the prompt
-                final_prompt = self.prompt_template.format(**context_placeholders)
-                
-                # Call LLM API
-                cota_sample = self._call_llm_api(final_prompt)
-                
-                # Add provenance metadata
-                cota_sample = self._add_provenance(cota_sample, context_placeholders)
-                
-                # Validate the generated sample
-                if self._validate_sample(cota_sample):
-                    generated_samples.append(cota_sample)
-                    self.generation_stats['samples_generated'] += 1
-                else:
-                    logger.warning(f"Sample {i+1} failed validation, retrying...")
-                    self.generation_stats['samples_invalid'] += 1
-                    continue
-                
-                # Update progress bar with stats
-                pbar.set_postfix({
-                    'success_rate': f"{self.generation_stats['samples_generated']}/{i+1}",
-                    'api_failures': self.generation_stats['api_calls_failed']
-                })
-                
-                # Checkpoint periodically
-                if (i + 1) % checkpoint_interval == 0:
-                    self._save_checkpoint(generated_samples, checkpoint_path)
-                    self._log_statistics()
+            # Retry logic for validation failures
+            max_retries = self.generator_params.get('max_validation_retries', 3)
+            retry_count = 0
+            sample_generated = False
+            
+            while retry_count < max_retries and not sample_generated:
+                try:
+                    # 1. Subclass builds the context
+                    context_result = self._build_context_placeholders()
                     
-            except KeyboardInterrupt:
-                logger.info("Generation interrupted by user. Saving checkpoint...")
-                self._save_checkpoint(generated_samples, checkpoint_path)
-                raise
-                
-            except Exception as e:
-                logger.error(f"Failed to generate sample {i+1}: {e}")
-                self.generation_stats['samples_failed'] += 1
-                
-                # Add a failed sample placeholder to maintain count
-                failed_sample = {
-                    "error": str(e),
-                    "failed_at": datetime.now().isoformat(),
-                    "task_name": self.task_name,
-                    "sample_index": i
-                }
-                generated_samples.append(failed_sample)
+                    # Handle both old (single dict) and new (tuple) return formats
+                    if isinstance(context_result, tuple):
+                        context_placeholders, initial_metadata = context_result
+                    else:
+                        # Backward compatibility for generators not yet updated
+                        context_placeholders = context_result
+                        initial_metadata = {}
+                    
+                    # 2. Base class formats the prompt
+                    final_prompt = ""
+                    try:
+                        final_prompt = self.prompt_template.format(**context_placeholders)
+                    except KeyError as ke:
+                        # If a key is missing, log error and continue
+                        logger.error(f"FATAL: Missing placeholder in prompt template for task '{self.task_name}'.")
+                        logger.error(f"  --> The prompt template requires the key: {ke}")
+                        logger.error(f"  --> The generator only provided these keys: {list(context_placeholders.keys())}")
+                        self.generation_stats['samples_failed'] += 1
+                        break  # Skip this sample entirely
+                    
+                    # 3. Base class calls the API
+                    llm_response = self._call_llm_api(final_prompt, context_placeholders=context_placeholders)
+                    
+                    # 4. Subclass validates the response. This is the critical gate.
+                    # It returns a valid sample dict, or None if validation fails.
+                    cota_sample = self._validate_and_process_response(llm_response, context_placeholders)
+                    
+                    if cota_sample:
+                        # SUCCESS CASE - Add valid sample to our list
+                        cota_sample = self._finalize_metadata(cota_sample, initial_metadata)
+                        newly_generated_samples.append(cota_sample)
+                        self.generation_stats['samples_generated'] += 1
+                        sample_generated = True
+                        
+                        pbar.set_postfix({
+                            'valid': self.generation_stats['samples_generated'],
+                            'invalid': self.generation_stats['samples_invalid'],
+                            'failed': self.generation_stats['samples_failed'],
+                            'retries': retry_count
+                        })
+                        
+                        if retry_count > 0:
+                            logger.info(f"Sample {i+1} passed validation after {retry_count} retries")
+                        else:
+                            logger.debug(f"Sample {i+1} passed validation")
+                    else:
+                        # VALIDATION FAILED CASE - Will retry
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            logger.debug(f"Sample {i+1} failed validation, retrying ({retry_count}/{max_retries})")
+                        else:
+                            # Max retries exhausted
+                            self.generation_stats['samples_invalid'] += 1
+                            logger.warning(f"Sample {i+1} failed validation after {max_retries} attempts")
+                    
+                except KeyboardInterrupt:
+                    logger.info("Generation interrupted by user.")
+                    pbar.close()
+                    raise
+                    
+                except Exception as e:
+                    # HARD FAILURE CASE (e.g., API is down)
+                    logger.error(f"Failed to generate sample {i+1}: {e}")
+                    self.generation_stats['samples_failed'] += 1
+                    break  # Stop retrying for this sample
         
-        # Final save and statistics
-        self._save_checkpoint(generated_samples, checkpoint_path)
+        pbar.close()
+        
+        # Log final statistics
         self._log_statistics()
         
         logger.info(
-            f"Completed generation for '{self.task_name}': "
-            f"{len(generated_samples)} samples generated"
+            f"Completed generation batch for '{self.task_name}': "
+            f"{len(newly_generated_samples)} valid samples generated out of {num_samples} attempts"
         )
         
-        return generated_samples
+        return newly_generated_samples
     
-    def _validate_sample(self, sample: Dict[str, Any]) -> bool:
-        """
-        Validate a generated sample for structural integrity.
-        
-        Args:
-            sample: The sample to validate
-            
-        Returns:
-            True if valid, False otherwise
-        """
-        # Check for required fields
-        required_fields = ['trajectory', 'final_answer']
-        for field in required_fields:
-            if field not in sample:
-                logger.debug(f"Sample missing required field: {field}")
-                return False
-        
-        # Validate trajectory structure
-        if not isinstance(sample.get('trajectory', None), list):
-            logger.debug("Trajectory is not a list")
-            return False
-        
-        if len(sample['trajectory']) == 0:
-            logger.debug("Empty trajectory")
-            return False
-        
-        # Validate each step in trajectory
-        for step in sample['trajectory']:
-            if not isinstance(step, dict):
-                logger.debug(f"Invalid step format: {step}")
-                return False
-            
-            # Check for minimum required step fields
-            if 'action' not in step:
-                logger.debug(f"Step missing action: {step}")
-                return False
-        
-        return True
     
     def _save_checkpoint(self, samples: List[Dict], checkpoint_path: Path):
         """

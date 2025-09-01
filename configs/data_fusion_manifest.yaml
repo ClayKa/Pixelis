@@ -1,25 +1,73 @@
 # ====================================================================
-# Data Fusion Manifest for Pixelis Training
+# Data Fusion Manifest for Stage 2 Processing
 # ====================================================================
-# This manifest controls the composition of the final training datasets,
-# ensuring precise control over trajectory types and data proportions.
+# This manifest controls how pre-augmented specialized datasets from
+# Stage 1 are fused into the final training and validation sets.
 # ====================================================================
 
-# ----------------------------------------------------
-# SFT Dataset Recipe
-# ----------------------------------------------------
-# Controls the composition for Supervised Fine-Tuning
+# Directory where the Stage 1 specialized datasets are stored
+stage1_output_dir: "data_outputs/specialized/"
+
+# Directory where the final train/val files will be saved
+final_output_dir: "data_outputs/final/"
+
+# Configuration for the final train/validation split
+final_split:
+  train_ratio: 0.95  # 95% for training, 5% for validation
+
+# Random seed for reproducibility
+seed: 42
+
+# Custom arguments for the script
+script_args:
+  dry_run: false
+
+# ====================================================================
+# SFT Dataset Fusion Recipe
+# ====================================================================
+# Defines the composition of the final SFT dataset.
+# Proportions should sum to 1.0.
+# ====================================================================
 sft_dataset_recipe:
-  target_total_samples: 110000
-  
-  # Task-specific proportions (what types of visual tasks)
-  task_proportions:
-    geometric_comparison: 0.25      # 25% - Spatial reasoning tasks
-    targeted_ocr: 0.20              # 20% - Text reading tasks
-    spatio_temporal_analysis: 0.20 # 20% - Video/tracking tasks
-    zoom_in_replication: 0.10       # 10% - Pixel-Reasoner baseline
-    select_frame_replication: 0.10 # 10% - Pixel-Reasoner baseline
-    general_vqa: 0.15               # 15% - General visual QA
+  target_total_samples: 110000  # Total samples to aim for in the final set
+
+  sources:
+    - name: "detail_perception_task"
+      proportion: 0.20  # 20% - Detail perception with ZOOM_IN
+      
+    - name: "geometric_comparison_task"
+      proportion: 0.25  # 25% - Geometric reasoning
+      
+    - name: "targeted_ocr_task"
+      proportion: 0.20  # 20% - OCR and text reading
+      
+    - name: "select_frame_task"
+      proportion: 0.15  # 15% - Frame selection for videos
+      
+    - name: "golden_trajectories"
+      proportion: 0.10  # 10% - High-quality golden examples
+      
+    - name: "trap_trajectories"
+      proportion: 0.05  # 5% - Trap/negative examples
+      
+    - name: "self_correction_trajectories"
+      proportion: 0.05  # 5% - Self-correction examples
+
+# ----------------------------------------------------
+# Legacy Configuration (kept for reference)
+# ----------------------------------------------------
+# The following sections are preserved for reference but not
+# used by the refactored Stage 2 script
+# ----------------------------------------------------
+
+# Task-specific proportions (what types of visual tasks)
+task_proportions:
+  geometric_comparison: 0.25      # 25% - Spatial reasoning tasks
+  targeted_ocr: 0.20              # 20% - Text reading tasks
+  spatio_temporal_analysis: 0.20 # 20% - Video/tracking tasks
+  zoom_in_replication: 0.10       # 10% - Pixel-Reasoner baseline
+  select_frame_replication: 0.10 # 10% - Pixel-Reasoner baseline
+  general_vqa: 0.15               # 15% - General visual QA
   
   # Trajectory composition (how the model should behave)
   trajectory_composition:
@@ -87,6 +135,28 @@ online_dataset_recipe:
     max_age_days: 90
     min_confidence_threshold: 0.3
     keep_all_corrections: true  # Always retain self-correction examples
+
+# ----------------------------------------------------
+# Trajectory Augmentation Configuration
+# ----------------------------------------------------
+# Controls how golden trajectories are augmented with
+# trap samples and self-correction behavior
+trajectory_augmentation:
+  proportions:
+    golden_positive: 0.6  # 60% are correct samples
+    self_correction: 0.2  # 20% teach recovery from errors
+    
+    # [REVISED] The remaining 20% for traps is now subdivided
+    trap_samples:
+      total_proportion: 0.2
+      # The proportions below are relative to the trap samples (sum to 1.0)
+      sub_types:
+        - name: "process_negative"  # The original, more obvious traps
+          proportion: 0.5  # 50% of traps are standard
+        - name: "perceptual_near_miss"
+          proportion: 0.25  # 25% are subtle perception traps
+        - name: "logical_fallacy"
+          proportion: 0.25  # 25% are subtle logic traps
 
 # ----------------------------------------------------
 # Data Validation Rules

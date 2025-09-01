@@ -9,6 +9,7 @@ import random
 from typing import Dict, Any, List, Optional, Tuple
 import logging
 from .base_generator import BaseTaskGenerator
+from .style_definitions import UNIVERSAL_STYLES, OCR_STYLES
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +30,14 @@ class TargetedOCRTaskGenerator(BaseTaskGenerator):
         """Initialize the targeted OCR task generator."""
         super().__init__(loaders, config, global_config)
         
-        # Define difficulty-specific loaders mapping
+        # [NEW] Combine universal and OCR-specific styles
+        self.styles = UNIVERSAL_STYLES + OCR_STYLES
+        
+        # Define difficulty-specific loaders mapping (from manifest)
         self.difficulty_loaders = {
-            'easy': ['textvqa_train', 'textcaps_train'],
-            'medium': ['infographics_vqa_train', 'docvqa_train'],
-            'hard': ['chartqa_train', 'hierarchical_text_train']
+            'easy': ['infographics_vqa_train', 'docvqa_train'],
+            'medium': ['hiertext_train'],
+            'hard': ['icdar_2019_art_train']
         }
         
         # Text extraction scenarios
@@ -57,21 +61,89 @@ class TargetedOCRTaskGenerator(BaseTaskGenerator):
         Returns:
             Dictionary mapping placeholder names to their values
         """
-        placeholders = {}
+        # [CRITICAL FIX] Ensure unique sample selection
+        source_datasets = ['InfographicsVQA', 'DocVQA', 'HierText', 'ICDAR 2019 ArT']
+        source_dataset = random.choice(source_datasets)
         
-        # Build context for each difficulty level
-        placeholders.update(self._build_easy_context())
-        placeholders.update(self._build_medium_context())
-        placeholders.update(self._build_hard_context())
+        max_attempts = 10
+        unique_sample_found = False
         
-        # Add general context
-        placeholders['task_description'] = self._generate_task_description()
-        placeholders['available_operations'] = self._get_available_operations()
-        placeholders['output_format'] = self._get_output_format()
-        placeholders['ocr_requirements'] = self._get_ocr_requirements()
+        for attempt in range(max_attempts):
+            # Create a unique ID for this potential sample
+            sample_idx = random.randint(0, 10000)
+            unique_id = f"ocr_{source_dataset}_{sample_idx}"
+            
+            # Check if already used
+            if unique_id not in self.used_source_sample_ids:
+                self.used_source_sample_ids.add(unique_id)
+                unique_sample_found = True
+                logger.debug(f"Found unique OCR sample: {unique_id} (attempt {attempt + 1})")
+                break
+            else:
+                logger.debug(f"OCR sample {unique_id} already used, trying another...")
         
-        # Track source datasets for provenance
-        placeholders['source_datasets'] = self._get_active_datasets()
+        if not unique_sample_found:
+            logger.warning(f"Could not find unique OCR sample after {max_attempts} attempts")
+        
+        # [NEW DIVERSITY LOGIC] Randomize task scenario and challenge
+        scenario = random.choice(self.text_scenarios)
+        difficulty = random.choice(['easy', 'medium', 'hard'])
+        challenge = random.choice(self.ocr_challenges[difficulty])
+        
+        logger.debug(f"OCR task variation: {scenario} with {challenge} challenge")
+        
+        # Generate context description based on scenario and challenge
+        context_descriptions = {
+            ('sign_reading', 'clear_text'): "A street sign with clear, readable text.",
+            ('document_extraction', 'multiple_fonts'): "A document with mixed typography and font styles.",
+            ('menu_parsing', 'curved_text'): "A restaurant menu with decorative curved text.",
+            ('receipt_analysis', 'low_resolution'): "A blurry receipt image requiring careful text extraction.",
+            ('chart_reading', 'partial_occlusion'): "A chart with partially obscured labels.",
+            ('interface_text', 'high_contrast'): "A user interface with high-contrast text elements.",
+            ('handwritten_notes', 'distorted_text'): "Handwritten notes with varying quality.",
+            ('multi_column_layout', 'artistic_fonts'): "A magazine layout with stylized fonts.",
+            ('table_extraction', 'multilingual'): "A table containing text in multiple languages."
+        }
+        
+        # Get context or generate default
+        context_key = (scenario, challenge)
+        if context_key in context_descriptions:
+            context_description = context_descriptions[context_key]
+        else:
+            context_description = f"A {scenario.replace('_', ' ')} scenario with {challenge.replace('_', ' ')} characteristics."
+        
+        # Generate target geometry (bbox) with more variation
+        x1 = random.randint(20, 300)
+        y1 = random.randint(20, 300)
+        width = random.randint(100, 400)
+        height = random.randint(50, 200)
+        target_geometry = f"[{x1}, {y1}, {x1 + width}, {y1 + height}]"
+        
+        # Generate ground truth text samples based on scenario
+        scenario_texts = {
+            'sign_reading': ["STOP", "YIELD", "ONE WAY", "NO PARKING", "SPEED LIMIT 55"],
+            'document_extraction': ["Annual Report 2024", "Executive Summary", "Table of Contents", "Confidential"],
+            'menu_parsing': ["Today's Special: $12.99", "Appetizers", "Main Courses", "Beverages"],
+            'receipt_analysis': ["Total: $45.67", "Tax: $3.89", "Date: 12/15/2024", "Transaction #78901"],
+            'chart_reading': ["Q1 Revenue", "Growth Rate: 15%", "Market Share", "Projected Sales"],
+            'interface_text': ["Submit", "Cancel", "Settings", "User Profile", "Logout"],
+            'handwritten_notes': ["Meeting at 3pm", "Call John", "Important!", "Project deadline"],
+            'multi_column_layout': ["Breaking News", "Editorial", "Sports Section", "Weather Today"],
+            'table_extraction': ["Item Code", "Price", "Quantity", "Description", "Stock Level"]
+        }
+        
+        ground_truth_text = random.choice(scenario_texts.get(scenario, ["Sample Text"]))
+        
+        # [CRITICAL NEW LOGIC] Dynamic Style Forcing
+        chosen_style = random.choice(self.styles)
+        logger.debug(f"Selected OCR style: {chosen_style['name']}")
+        
+        placeholders = {
+            'source_dataset': source_dataset,
+            'context_description': context_description,
+            'target_geometry': target_geometry,
+            'ground_truth_text': ground_truth_text
+        }
         
         return placeholders
     
@@ -79,15 +151,17 @@ class TargetedOCRTaskGenerator(BaseTaskGenerator):
         """Build context for easy OCR tasks."""
         context = {}
         
-        # Try to get TextVQA or TextCaps loader
+        # Try easy dataset loaders from manifest (InfographicsVQA, DocVQA)
         loader = None
-        for loader_name in ['textvqa_train', 'textcaps_train']:
-            if loader_name in self.loaders:
-                loader = self.loaders[loader_name]
+        loader_name = None
+        for name in ['infographics_vqa_train', 'docvqa_train']:
+            if name in self.loaders:
+                loader = self.loaders[name]
+                loader_name = name
                 break
         
         if not loader:
-            logger.warning("No easy OCR loader available, using mock data")
+            logger.warning("Datasources 'infographics_vqa_train' and 'docvqa_train' not found for Easy difficulty. Check manifest.")
             return self._build_mock_easy_context()
         
         try:
@@ -123,15 +197,14 @@ class TargetedOCRTaskGenerator(BaseTaskGenerator):
         """Build context for medium difficulty OCR tasks."""
         context = {}
         
-        # Try document-oriented loaders
+        # Try medium dataset loader from manifest (HierText)
         loader = None
-        for loader_name in ['infographics_vqa_train', 'docvqa_train', 'fineweb_edu_10bt']:
-            if loader_name in self.loaders:
-                loader = self.loaders[loader_name]
-                break
+        loader_name = 'hiertext_train'
+        if loader_name in self.loaders:
+            loader = self.loaders[loader_name]
         
         if not loader:
-            logger.warning("No medium OCR loader available, using mock data")
+            logger.warning("Datasource 'hiertext_train' not found for Medium difficulty. Check manifest.")
             return self._build_mock_medium_context()
         
         try:
@@ -179,26 +252,21 @@ class TargetedOCRTaskGenerator(BaseTaskGenerator):
         """Build context for hard OCR tasks."""
         context = {}
         
-        # Try complex document loaders
+        # Try hard dataset loader from manifest (ICDAR 2019 ArT)
         loader = None
-        for loader_name in ['chartqa_train', 'hierarchical_text_train', 'mathvista_train']:
-            if loader_name in self.loaders:
-                loader = self.loaders[loader_name]
-                break
+        loader_name = 'icdar_2019_art_train'
+        if loader_name in self.loaders:
+            loader = self.loaders[loader_name]
         
         if not loader:
-            # Fallback to any available loader
-            if self.loaders:
-                loader = list(self.loaders.values())[0]
-            else:
-                logger.warning("No hard OCR loader available, using mock data")
-                return self._build_mock_hard_context()
+            logger.warning("Datasource 'icdar_2019_art_train' not found for Hard difficulty. Check manifest.")
+            return self._build_mock_hard_context()
         
         try:
             sample = loader.get_item(random.randint(0, min(1000, len(loader) - 1)))
             
             # Build hard context
-            context['hard_source_dataset'] = loader_name.replace('_', ' ').title() if loader_name else 'Complex Documents'
+            context['hard_source_dataset'] = 'ICDAR 2019 ArT'
             context['hard_document_complexity'] = random.choice([
                 'scientific paper with equations',
                 'multilingual document',

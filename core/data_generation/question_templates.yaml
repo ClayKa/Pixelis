@@ -1,0 +1,61 @@
+# Question Framing Templates for Detail Perception Task
+# Each template must include {task_goal} and {location_info} placeholders
+
+templates:
+  # Professional/Technical Style
+  - "I need to {task_goal}. Can you please zoom in on the area at {location_info} and tell me what you find?"
+  - "The current task is to {task_goal}. Please focus on the region at {location_info} and provide a detailed observation."
+  - "For quality control purposes, I need to {task_goal}. Check {location_info} after zooming in."
+  - "The specification requires that we {task_goal}. Please inspect {location_info}."
+  
+  # Investigative Style
+  - "Let's investigate the section at {location_info}. My primary objective is to {task_goal}. What becomes visible after magnification?"
+  - "I'm investigating whether we can {task_goal}. Focus on {location_info} and let me know."
+  - "What can you tell me about the area at {location_info}? I'm specifically trying to {task_goal}."
+  
+  # Casual/Conversational Style
+  - "I'm curious to {task_goal}. Take a closer look at {location_info}."
+  - "Quick check: Can you {task_goal} by examining {location_info}?"
+  - "Help needed: I'm trying to {task_goal} at {location_info}."
+  
+  # Analytical Style
+  - "My analysis requires me to {task_goal}. Zoom in on {location_info} and report your findings."
+  - "Part of my analysis involves trying to {task_goal}. Look at {location_info} closely."
+  - "A detailed look at {location_info} is required. My goal here is to {task_goal}."
+  
+  # Direct/Command Style
+  - "Zoom into {location_info} - I'm hoping to {task_goal}."
+  - "Please {task_goal} by inspecting {location_info} with magnification."
+  - "At {location_info}, can you {task_goal}?"
+  
+  # Procedural Style
+  - "The next step is to {task_goal}. Please use the zoom tool on {location_info} and describe the result."
+  - "To proceed, I must first {task_goal}. Let's examine {location_info}."
+  - "Before proceeding, let's {task_goal}. The target area is {location_info}."
+  
+  # Documentation Style
+  - "For documentation, I need to {task_goal}. Could you zoom into {location_info}?"
+  - "My objective: {task_goal}. Location: {location_info}. What do you observe?"
+  - "Regarding {location_info}, I need to {task_goal}. What do you find?"
+  
+  # Questioning Style
+  - "Is it possible to {task_goal}? You'll need to magnify the area at {location_info} to be sure."
+  - "Would you mind checking if we can {task_goal}? The coordinates are {location_info}."
+  - "Can you assist me in trying to {task_goal}? The area of interest is {location_info}."
+  
+  # Collaborative Style
+  - "Help me {task_goal} by examining the region at {location_info} closely."
+  - "This requires us to {task_goal}. Please magnify {location_info} and describe what you see."
+  - "Could you provide a close-up of {location_info}? It's essential that I {task_goal} for my report."
+  
+  # Inspection Style
+  - "To complete this inspection, I must {task_goal}. Examine {location_info} in detail."
+  - "Looking at {location_info}, my task is to {task_goal}. What's visible there?"
+  - "During this inspection phase, I need to {task_goal}. Focus the zoom on {location_info}."
+  
+  # Critical/Urgent Style
+  - "It's critical that I {task_goal}. Please provide a detailed view of {location_info}."
+  - "While reviewing {location_info}, I should {task_goal}. Can you help with the magnification?"
+  
+  # Add your custom templates below:
+  # - "Your custom template with {task_goal} and {location_info} placeholders"
