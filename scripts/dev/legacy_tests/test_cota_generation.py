@@ -10,7 +10,7 @@ This script tests the complete data generation workflow including:
 5. Trajectory augmentation
 
 Usage:
-    python scripts/test_cota_generation.py [--config path/to/config.yaml] [--samples N]
+    python scripts/dev/legacy_tests/test_cota_generation.py [--config path/to/config.yaml] [--samples N]
 """
 
 import sys

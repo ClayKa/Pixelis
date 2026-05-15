@@ -194,3 +194,8 @@ Mock/demo entrypoints:
 
 These demo paths are useful for smoke validation and UI demonstrations, but
 they should not be used for model-quality claims or benchmark reporting.
+
+Development-only helpers:
+
+- `scripts/dev/legacy_tests/` contains old standalone validation scripts.
+- Maintained automated tests live in `tests/` and should be run with `python -m pytest`.

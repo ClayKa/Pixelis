@@ -219,6 +219,7 @@ Pixelis/
 - **Security & Privacy**: [`docs/SECURITY_AND_PRIVACY.md`](docs/SECURITY_AND_PRIVACY.md)
 - **Computational Budget**: [`docs/COMPUTE_BUDGET.md`](docs/COMPUTE_BUDGET.md)
 - **Task Details**: `tasks/Phase*.md`
+- **Historical Notes**: [`docs/archive/`](docs/archive/)
 
 ## Requirements
 

@@ -18,7 +18,7 @@ python --version
 
 # Test imports
 echo "🧪 Testing system..."
-python scripts/test_cota_generation.py
+python scripts/dev/legacy_tests/test_cota_generation.py
 if [ $? -ne 0 ]; then
     echo "❌ System test failed. Please fix issues before continuing."
     exit 1

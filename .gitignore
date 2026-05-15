@@ -60,6 +60,7 @@ weights/
 *.log
 logs/
 runs/
+audit/
 wandb/
 tensorboard/
 mlflow/
@@ -83,6 +84,10 @@ saved_models/*
 !saved_models/.gitkeep
 analysis_outputs/
 pretrained_models/
+artifact_cache/
+benchmark_results/
+experience_buffer/
+simulation_results/
 
 # Temporary files
 tmp/
@@ -113,6 +118,8 @@ docs/build/
 .tox/
 .nox/
 .hypothesis/
+coverage.xml
+htmlcov/
 
 # Custom
 *.bak
@@ -130,11 +137,7 @@ debug/
 !**/saved_models/.gitkeep
 !**/models/**/__init__.py
 
-coverage.xml
 .coverage.*
-.coverage
-.pytest_cache/
-htmlcov/
 .claude/agents
 hiertext_env/
 api.md
