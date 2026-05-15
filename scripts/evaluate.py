@@ -8,6 +8,8 @@ import argparse
 import json
 import sys
 import time
+import hashlib
+import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -59,42 +61,59 @@ class ModelEvaluator:
             Dictionary of evaluation metrics
         """
         logger.info(f"Evaluating on {benchmark_name}")
-        
-        # TODO: Implement actual evaluation logic
-        # This is a placeholder implementation
-        
-        import random
-        
-        # Simulate evaluation
-        time.sleep(1)
-        
-        # Generate mock metrics based on benchmark
+
+        allow_mock_metrics = bool(self.config.get("allow_mock_metrics", False))
+        if not allow_mock_metrics:
+            missing_paths = [
+                str(path)
+                for path in (model_path, dataset_path)
+                if not Path(path).exists()
+            ]
+            if missing_paths:
+                raise FileNotFoundError(
+                    "Evaluation requires concrete local model and dataset paths. "
+                    f"Missing: {missing_paths}. Pass --model-path/--dataset-path or "
+                    "register artifacts whose local paths are available."
+                )
+
+            raise NotImplementedError(
+                "No production evaluator backend is configured for scripts/evaluate.py. "
+                "Use the benchmark-specific evaluators under reference/ or wire a real "
+                "model inference backend before reporting metrics. For CI smoke tests only, "
+                "rerun with --allow-mock-metrics."
+            )
+
+        seed_material = f"{model_path}|{dataset_path}|{benchmark_name}|{self.config.get('seed', 0)}"
+        seed = int(hashlib.sha256(seed_material.encode("utf-8")).hexdigest()[:16], 16)
+        rng = random.Random(seed)
+
+        # Deterministic smoke metrics. These are never enabled by default.
         if benchmark_name == "mm-vet":
             metrics = {
-                "accuracy": random.uniform(0.6, 0.9),
-                "precision": random.uniform(0.6, 0.9),
-                "recall": random.uniform(0.6, 0.9),
-                "f1_score": random.uniform(0.6, 0.9),
+                "accuracy": rng.uniform(0.6, 0.9),
+                "precision": rng.uniform(0.6, 0.9),
+                "recall": rng.uniform(0.6, 0.9),
+                "f1_score": rng.uniform(0.6, 0.9),
             }
         elif benchmark_name == "mmmu":
             metrics = {
-                "accuracy": random.uniform(0.5, 0.8),
+                "accuracy": rng.uniform(0.5, 0.8),
                 "subject_scores": {
-                    "math": random.uniform(0.4, 0.8),
-                    "science": random.uniform(0.5, 0.9),
-                    "humanities": random.uniform(0.6, 0.9),
+                    "math": rng.uniform(0.4, 0.8),
+                    "science": rng.uniform(0.5, 0.9),
+                    "humanities": rng.uniform(0.6, 0.9),
                 },
             }
         elif benchmark_name == "custom":
             metrics = {
-                "tool_accuracy": random.uniform(0.7, 0.95),
-                "segmentation_iou": random.uniform(0.6, 0.85),
-                "ocr_edit_distance": random.uniform(0.1, 0.3),
-                "tracking_mota": random.uniform(0.5, 0.8),
+                "tool_accuracy": rng.uniform(0.7, 0.95),
+                "segmentation_iou": rng.uniform(0.6, 0.85),
+                "ocr_edit_distance": rng.uniform(0.1, 0.3),
+                "tracking_mota": rng.uniform(0.5, 0.8),
             }
         else:
             metrics = {
-                "score": random.uniform(0.5, 0.9),
+                "score": rng.uniform(0.5, 0.9),
             }
         
         # Add metadata
@@ -102,6 +121,7 @@ class ModelEvaluator:
         metrics["model_path"] = str(model_path)
         metrics["dataset_path"] = str(dataset_path)
         metrics["timestamp"] = time.time()
+        metrics["mock_metrics"] = True
         
         return metrics
     
@@ -184,9 +204,8 @@ def run_evaluation(
     dataset_meta = artifact_manager.use_artifact(dataset_name, dataset_version)
     logger.info(f"Using dataset: {dataset_meta.name}:{dataset_meta.version}")
     
-    # Get paths (in real implementation, would download/load actual files)
-    model_path = Path("checkpoints/model.pt")  # Placeholder
-    dataset_path = Path("data/dataset.json")   # Placeholder
+    model_path = Path(config.get("model_path") or model_artifact.split(":", 1)[0])
+    dataset_path = Path(config.get("dataset_path") or dataset_artifact.split(":", 1)[0])
     
     # Initialize evaluator
     evaluator = ModelEvaluator(config)
@@ -284,11 +303,23 @@ def main():
         required=True,
         help="Model artifact name (e.g., 'model-abc123' or 'model-abc123:v1')",
     )
+
+    parser.add_argument(
+        "--model-path",
+        type=str,
+        help="Concrete local model checkpoint path. Required for production evaluation.",
+    )
     
     parser.add_argument(
         "--dataset",
         type=str,
         help="Dataset artifact name (e.g., 'dataset-mmvet-v1')",
+    )
+
+    parser.add_argument(
+        "--dataset-path",
+        type=str,
+        help="Concrete local evaluation dataset path. Required for production evaluation.",
     )
     
     # Benchmark configuration
@@ -345,6 +376,12 @@ def main():
         action="store_true",
         help="Enable deterministic mode (may reduce performance)",
     )
+
+    parser.add_argument(
+        "--allow-mock-metrics",
+        action="store_true",
+        help="Allow deterministic smoke-test metrics when no evaluator backend is wired.",
+    )
     
     args = parser.parse_args()
     
@@ -365,6 +402,9 @@ def main():
         "benchmark_name": args.benchmark,
         "seed": args.seed,
         "deterministic_mode": args.deterministic,
+        "allow_mock_metrics": args.allow_mock_metrics,
+        "model_path": args.model_path,
+        "dataset_path": args.dataset_path,
     }
     
     # Load benchmark configuration if provided

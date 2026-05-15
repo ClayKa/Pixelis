@@ -17,6 +17,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.multiprocessing as mp
 from torch.multiprocessing import Queue
+from multiprocessing import shared_memory
 import numpy as np
 from typing import Dict, Any, Optional, Tuple, List
 from dataclasses import dataclass, field
@@ -35,6 +36,19 @@ from ..modules.reward_shaping import RewardOrchestrator
 from ..modules.audit import AuditLogger, AuditEventType, AuditResult, audit_log
 
 logger = logging.getLogger(__name__)
+
+
+_TORCH_TO_NUMPY_DTYPE = {
+    torch.float16: np.float16,
+    torch.float32: np.float32,
+    torch.float64: np.float64,
+    torch.int8: np.int8,
+    torch.int16: np.int16,
+    torch.int32: np.int32,
+    torch.int64: np.int64,
+    torch.uint8: np.uint8,
+    torch.bool: np.bool_,
+}
 
 
 @dataclass
@@ -77,23 +91,53 @@ class SharedMemoryReconstructor:
         Returns:
             Reconstructed tensor
         """
-        # Create a tensor with the specified shape and dtype
-        # In production, this would connect to the actual shared memory segment
         shape = tuple(shm_info['shape'])
         dtype = shm_info.get('dtype', torch.float32)
-        
-        # For PyTorch shared memory, we would typically:
-        # 1. Get the shared memory handle from the name
-        # 2. Create a storage view of the shared memory
-        # 3. Create a tensor from the storage
-        
-        logger.debug(f"Reconstructing tensor from shared memory: {shm_info.get('name', 'unknown')}")
-        
-        # Placeholder implementation - in production would access actual shared memory
-        # This shows the interface structure
-        tensor = torch.zeros(shape, dtype=dtype)
-        
-        return tensor
+        name = shm_info.get('name')
+
+        logger.debug(f"Reconstructing tensor from shared memory: {name or 'unknown'}")
+
+        if name:
+            try:
+                np_dtype = _TORCH_TO_NUMPY_DTYPE[dtype]
+                shm = shared_memory.SharedMemory(name=name, create=False)
+                try:
+                    array = np.ndarray(shape, dtype=np_dtype, buffer=shm.buf)
+                    return torch.from_numpy(array).clone()
+                finally:
+                    shm.close()
+            except Exception as exc:
+                logger.warning(
+                    "Could not open shared memory segment %s; returning zero tensor: %s",
+                    name,
+                    exc,
+                )
+
+        return torch.zeros(shape, dtype=dtype)
+
+
+def _metadata_tensor(
+    metadata: Dict[str, Any],
+    key: str,
+    dtype: torch.dtype = torch.long,
+    device: Optional[torch.device] = None,
+) -> Optional[torch.Tensor]:
+    """Read a tensor field from serializable experience metadata."""
+    if key not in metadata or metadata[key] is None:
+        return None
+
+    value = metadata[key]
+    if isinstance(value, torch.Tensor):
+        tensor = value.detach().clone()
+    else:
+        tensor = torch.as_tensor(value)
+
+    tensor = tensor.to(dtype=dtype)
+    if tensor.dim() == 1:
+        tensor = tensor.unsqueeze(0)
+    if device is not None:
+        tensor = tensor.to(device)
+    return tensor
 
 
 class UpdateWorker:
@@ -247,9 +291,9 @@ class UpdateWorker:
             Optimizer instance
         """
         # Filter only trainable parameters
-        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+        self.trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         
-        if not trainable_params:
+        if not self.trainable_params:
             logger.warning("No trainable parameters found!")
             return None
         
@@ -258,7 +302,7 @@ class UpdateWorker:
         
         if optimizer_type == 'adamw':
             optimizer = torch.optim.AdamW(
-                trainable_params,
+                self.trainable_params,
                 lr=learning_rate,
                 betas=(0.9, 0.999),
                 eps=1e-8,
@@ -266,19 +310,19 @@ class UpdateWorker:
             )
         elif optimizer_type == 'adam':
             optimizer = torch.optim.Adam(
-                trainable_params,
+                self.trainable_params,
                 lr=learning_rate,
                 betas=(0.9, 0.999),
                 eps=1e-8
             )
         else:
             optimizer = torch.optim.SGD(
-                trainable_params,
+                self.trainable_params,
                 lr=learning_rate,
                 momentum=0.9
             )
         
-        logger.info(f"Created {optimizer_type} optimizer for {len(trainable_params)} parameters")
+        logger.info(f"Created {optimizer_type} optimizer for {len(self.trainable_params)} parameters")
         return optimizer
     
     def _init_logs(self):
@@ -377,22 +421,35 @@ class UpdateWorker:
                 return
             
             # Prepare inputs
-            input_ids = experience.get_input_ids()
-            labels = experience.get_labels()
+            device = self._model_device()
+            input_ids = _metadata_tensor(experience.metadata, 'input_ids', torch.long, device)
+            labels = _metadata_tensor(experience.metadata, 'labels', torch.long, device)
+            attention_mask = _metadata_tensor(experience.metadata, 'attention_mask', torch.long, device)
+
+            if input_ids is None:
+                input_ids = experience.get_input_ids().to(device)
+            if labels is None:
+                labels = experience.get_labels().to(device)
             
             # Set learning rate
             for param_group in self.optimizer.param_groups:
                 param_group['lr'] = learning_rate
             
             # Forward pass
+            model_kwargs = {
+                'input_ids': input_ids,
+                'labels': labels,
+            }
+            if attention_mask is not None:
+                model_kwargs['attention_mask'] = attention_mask
+
             if hasattr(experience, 'image_features') and experience.image_features is not None:
-                outputs = self.model(
-                    input_ids=input_ids,
-                    images=experience.image_features,
-                    labels=labels
-                )
-            else:
-                outputs = self.model(input_ids=input_ids, labels=labels)
+                image_features = experience.image_features
+                if isinstance(image_features, torch.Tensor):
+                    image_features = image_features.to(device)
+                model_kwargs['images'] = image_features
+
+            outputs = self.model(**model_kwargs)
             
             # Get RL loss
             rl_loss = outputs.loss if hasattr(outputs, 'loss') else outputs
@@ -401,6 +458,7 @@ class UpdateWorker:
             # Weight by reward if provided
             if reward_tensor is not None:
                 if isinstance(reward_tensor, torch.Tensor):
+                    reward_tensor = reward_tensor.to(device)
                     rl_loss = rl_loss * reward_tensor.mean()
                 else:
                     rl_loss = rl_loss * reward_tensor
@@ -441,7 +499,7 @@ class UpdateWorker:
             
             # Gradient clipping (Magnitude Guardrail)
             grad_norm = torch.nn.utils.clip_grad_norm_(
-                self.model.parameters(),
+                self.trainable_params,
                 max_norm=self.gradient_clip_norm
             )
             
@@ -526,7 +584,10 @@ class UpdateWorker:
         """
         if original_logits is None:
             # No original logits, return zero penalty
-            return torch.tensor(0.0), torch.tensor(0.0)
+            device = current_logits.device if isinstance(current_logits, torch.Tensor) else torch.device("cpu")
+            return torch.tensor(0.0, device=device), torch.tensor(0.0, device=device)
+
+        original_logits = original_logits.to(current_logits.device)
         
         # Convert logits to probabilities
         current_probs = F.softmax(current_logits, dim=-1)
@@ -544,6 +605,15 @@ class UpdateWorker:
         kl_penalty = kl_div
         
         return kl_penalty, kl_div
+
+    def _model_device(self) -> torch.device:
+        """Return the current model device."""
+        try:
+            if getattr(self, "trainable_params", None):
+                return self.trainable_params[0].device
+            return next(self.model.parameters()).device
+        except Exception:
+            return torch.device("cpu")
     
     def _update_ema_model(self):
         """

@@ -558,7 +558,8 @@ class TestFrameExtractionAccuracy:
         # Check frame values (approximately - compression may alter values)
         for i, idx in enumerate(indices):
             # The first pixel should roughly match the frame index
-            assert abs(frames[i, 0, 0, 0] - idx) < 10  # Allow for compression artifacts
+            pixel_value = int(frames[i, 0, 0, 0])
+            assert abs(pixel_value - idx) < 10  # Allow for compression artifacts
     
     def test_frame_accuracy_range(self, create_synthetic_video):
         """Test that frame ranges are extracted correctly."""

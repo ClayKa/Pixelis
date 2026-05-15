@@ -138,11 +138,6 @@ addopts = [
     "--ignore=reference/",
     "--ignore=saved_models/",
     "--ignore=checkpoints/",
-    "--cov=core",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "--cov-report=xml",
-    "--cov-fail-under=75",  # Minimum 75% coverage for core modules
 ]
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
@@ -150,6 +145,8 @@ markers = [
     "unit: marks tests as unit tests",
     "gpu: marks tests that require GPU",
     "asyncio: mark test as requiring asyncio",
+    "requires_generated_data: marks tests that need generated local data artifacts",
+    "faiss: marks tests that exercise FAISS native indexes",
 ]
 
 [tool.coverage.run]

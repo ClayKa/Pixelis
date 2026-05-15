@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Online Simulation Script
+MOCK/DEMO ONLY: Online Simulation Script
 
 Serves as a configurable engine for validating the functional correctness 
 and stability of the entire online learning system.
@@ -25,10 +25,12 @@ import time
 import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict, Any, Optional, List, Tuple
 import numpy as np
 import torch
 import torch.multiprocessing as mp
+import yaml
 from dataclasses import dataclass, field
 import psutil
 from collections import deque
@@ -38,7 +40,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from core.engine.inference_engine import InferenceEngine
 from core.modules.experience_buffer import ExperienceBuffer
-from core.modules.voting import VotingModule
+from core.modules.voting import TemporalEnsembleVoting
 from core.modules.reward_shaping import RewardOrchestrator
 from core.modules.alerter import Alerter, HealthMonitor
 from core.data_structures import Experience
@@ -69,6 +71,7 @@ class SimulationConfig:
     seed: int = 42
     model_path: Optional[str] = None
     config_path: Optional[str] = None
+    start_update_worker: bool = False
 
 
 @dataclass
@@ -129,33 +132,31 @@ class SimulationMetrics:
         }
 
 
-class MockModel:
+class MockModel(torch.nn.Module):
     """Mock model for simulation testing."""
     
     def __init__(self):
+        super().__init__()
         self.call_count = 0
+        self.projection = torch.nn.Linear(16, 100)
     
-    def forward(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate mock prediction."""
-        self.call_count += 1
-        return {
-            'answer': f"mock_answer_{self.call_count}",
-            'confidence': random.uniform(0.3, 0.95),
-            'logits': torch.randn(1, 100),
-            'trajectory': []
-        }
-    
-    def parameters(self):
-        """Return mock parameters."""
-        return [torch.nn.Parameter(torch.randn(10, 10))]
-    
-    def state_dict(self):
-        """Return mock state dict."""
-        return {'mock_param': torch.randn(10, 10)}
-    
-    def eval(self):
-        """Set to eval mode."""
-        pass
+    def forward(self, input_data: Optional[Dict[str, Any]] = None, **kwargs) -> Any:
+        """Generate mock predictions or a tiny differentiable training output."""
+        if isinstance(input_data, dict):
+            self.call_count += 1
+            features = torch.randn(1, 16)
+            logits = self.projection(features)
+            return {
+                'answer': f"mock_answer_{self.call_count}",
+                'confidence': random.uniform(0.3, 0.95),
+                'logits': logits.detach(),
+                'trajectory': []
+            }
+
+        features = torch.randn(1, 16, device=self.projection.weight.device)
+        logits = self.projection(features)
+        loss = logits.mean()
+        return SimpleNamespace(loss=loss, logits=logits)
 
 
 class OnlineSimulation:
@@ -217,7 +218,10 @@ class OnlineSimulation:
         # Load configuration
         if self.config.config_path:
             with open(self.config.config_path, 'r') as f:
-                system_config = json.load(f)
+                if self.config.config_path.endswith((".yaml", ".yml")):
+                    system_config = yaml.safe_load(f)
+                else:
+                    system_config = json.load(f)
         else:
             system_config = self._get_default_config()
         
@@ -227,7 +231,11 @@ class OnlineSimulation:
             embedding_dim=system_config.get('embedding_dim', 768)
         )
         
-        self.voting_module = VotingModule(config=system_config)
+        self.voting_module = TemporalEnsembleVoting(
+            strategy=system_config.get('voting_strategy', 'weighted'),
+            min_votes_required=system_config.get('min_votes_required', 3),
+            confidence_threshold=system_config.get('confidence_threshold', 0.5),
+        )
         
         self.reward_orchestrator = RewardOrchestrator(config=system_config)
         
@@ -392,8 +400,21 @@ class OnlineSimulation:
         # Initialize components
         self.initialize_components()
         
-        # Start the inference engine worker
-        self.inference_engine.start_update_worker()
+        # Start the update worker only when explicitly requested. Some local
+        # sandboxes block torch_shm_manager during process startup; mock smoke
+        # validation can still exercise inference and buffer wiring without it.
+        if self.config.start_update_worker or self.config.enable_chaos:
+            try:
+                self.inference_engine.start_update_worker()
+            except RuntimeError as exc:
+                if "torch_shm_manager" not in str(exc):
+                    raise
+                logger.warning(
+                    "torch_shm_manager is unavailable; continuing mock simulation "
+                    "without an update worker."
+                )
+        else:
+            logger.info("Update worker disabled for mock simulation")
         
         # Calculate end time
         end_time = datetime.now() + timedelta(hours=self.config.duration_hours)
@@ -610,8 +631,10 @@ def main():
                        help='Output directory for results')
     parser.add_argument('--model-path', type=str, default=None,
                        help='Path to model checkpoint (optional)')
-    parser.add_argument('--config-path', type=str, default=None,
-                       help='Path to system configuration JSON (optional)')
+    parser.add_argument('--config-path', '--config', type=str, default=None,
+                       help='Path to system configuration JSON/YAML (optional)')
+    parser.add_argument('--start-update-worker', action='store_true',
+                       help='Start the asynchronous update worker during the mock simulation')
     
     # Other
     parser.add_argument('--seed', type=int, default=42,
@@ -632,6 +655,7 @@ def main():
         output_dir=Path(args.output_dir),
         model_path=args.model_path,
         config_path=args.config_path,
+        start_update_worker=args.start_update_worker,
         seed=args.seed
     )
     

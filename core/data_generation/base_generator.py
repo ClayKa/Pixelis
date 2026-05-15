@@ -16,10 +16,14 @@ from typing import Any, Dict, List, Optional, Tuple
 import logging
 from datetime import datetime
 from tqdm import tqdm
-import openai
 import os
 import hashlib
 from collections import defaultdict
+
+try:
+    import openai
+except ImportError:  # pragma: no cover - exercised in minimal environments
+    openai = None
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +59,15 @@ class BaseTaskGenerator(ABC):
         self.loaders = loaders
         self.config = config
         self.global_config = global_config
-        self.task_name = self.config.get('name', 'unknown_task')
+        self.task_name = self.config.get('name') or self.config.get('task_name', 'unknown_task')
         self.generator_params = self.config.get('generator_params', {})
         
         # Configure validation strictness (default: strict for better data quality)
-        self.validation_strictness = self.config.get('generator_config', {}).get('validation_strictness', 'strict')
+        self.validation_strictness = (
+            self.config.get('generator_config', {}).get('validation_strictness')
+            or self.config.get('validation_strictness')
+            or 'strict'
+        )
         # Options: 'strict', 'standard', 'lenient', 'ultra_lenient'
         logger.info(f"Validation strictness set to: {self.validation_strictness}")
         
@@ -91,13 +99,25 @@ class BaseTaskGenerator(ABC):
         Raises:
             FileNotFoundError: If the prompt template file doesn't exist
         """
-        prompt_path = Path(self.config.get('prompt_template', ''))
-        if not prompt_path.exists():
+        prompt_template = self.config.get('prompt_template') or self.config.get('prompt_template_path')
+
+        if not prompt_template:
+            templates_dir = (
+                self.global_config.get('data_generation', {}).get(
+                    'prompt_templates_dir',
+                    'core/data_generation/prompt_templates'
+                )
+            )
+            stem = self.task_name[:-5] if self.task_name.endswith('_task') else self.task_name
+            prompt_template = str(Path(templates_dir) / f"{stem}.md")
+
+        prompt_path = Path(prompt_template)
+        if not prompt_path.is_file():
             # Try relative to project root
             project_root = Path(__file__).parent.parent.parent
             prompt_path = project_root / prompt_path
             
-        if not prompt_path.exists():
+        if not prompt_path.is_file():
             raise FileNotFoundError(
                 f"Prompt template not found for task '{self.task_name}': {prompt_path}"
             )
@@ -108,10 +128,14 @@ class BaseTaskGenerator(ABC):
         logger.info(f"Loaded prompt template from {prompt_path}")
         return template
     
-    def _initialize_api_client(self) -> openai.OpenAI:
+    def _initialize_api_client(self) -> Optional[Any]:
         """
         Initializes the API client and verifies the API key presence.
         """
+        if openai is None:
+            logger.warning("OpenAI client package is not installed; using mock generation mode.")
+            return None
+
         # Get API configuration from global config
         api_profile = self.global_config.get('api_profiles', {}).get('generator_api', {})
         api_key_env_var = api_profile.get('api_key_env_variable', 'OPENROUTER_API_KEY')

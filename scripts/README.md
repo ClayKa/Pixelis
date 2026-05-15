@@ -173,3 +173,24 @@ The SVD analysis generates a configuration like:
 - matplotlib/seaborn (for visualization)
 
 See `requirements.txt` for complete dependencies.
+
+## Production and Demo Boundaries
+
+Production training entrypoints:
+
+- `python scripts/train.py --mode sft --config configs/training_params.yaml --offline`
+- `python scripts/train.py --mode rft --config configs/rft_config.yaml --offline`
+- `python scripts/train.py --mode ttrl --config configs/ttrl_config.yaml --offline`
+
+TTRL production mode requires `configs/ttrl_config.yaml` to provide a real
+`ttrl.request_path` and either `ttrl.model_loader` or `ttrl.model_path`.
+
+Mock/demo entrypoints:
+
+- `python scripts/run_online_simulation.py --config configs/training_params.yaml`
+- `bash scripts/quick_start.sh` option 1
+- `python scripts/launch_demo.py`
+- `python scripts/launch_public_demo.py`
+
+These demo paths are useful for smoke validation and UI demonstrations, but
+they should not be used for model-quality claims or benchmark reporting.

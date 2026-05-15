@@ -1,0 +1,64 @@
+# TTRL online training configuration.
+#
+# This config is intentionally strict: it requires a real local model and a
+# real request stream. Use scripts/run_online_simulation.py only for mock
+# validation.
+
+training:
+  mode: "ttrl"
+  output_dir: "./outputs/ttrl"
+  seed: 42
+  deterministic_mode: false
+
+model:
+  # Set one of these before running:
+  # - ttrl.model_loader: "your_package.your_module:load_model"
+  # - ttrl.model_path: "/local/path/to/hf-or-torch-model"
+  base_model_path: null
+  adapter_path: null
+
+online:
+  confidence_threshold: 0.7
+  min_confidence_for_update: 0.5
+  min_learning_rate: 1.0e-6
+  max_learning_rate: 1.0e-5
+  buffer_size: 10000
+  k_neighbors: 5
+  similarity_metric: "cosine"
+  voting_strategy: "weighted"
+  min_votes_required: 3
+  enable_persistence: true
+  persistence_path: "./outputs/ttrl/experience_buffer"
+  update_queue_size: 100
+  gradient_clip_norm: 1.0
+  use_ema: true
+  ema_decay: 0.999
+  sync_frequency: 100
+  cold_start_threshold: 100
+
+ttrl:
+  # Required. JSONL records should include question plus either input_ids/labels
+  # or a tokenizer-compatible question/target pair handled by your model_loader.
+  request_path: null
+
+  # Optional model loader. Preferred for Qwen2.5-VL/Qwen3 deployments because it
+  # can return exactly the model/tokenizer/processor objects used in your stack.
+  # Signature: load_model(config) -> model OR (model, tokenizer, processor)
+  model_loader: null
+
+  # Alternative local HuggingFace path. Remote downloads are disabled by default.
+  model_path: null
+  auto_model_class: "AutoModelForCausalLM"
+  allow_remote_download: false
+  trust_remote_code: false
+  model_load_kwargs: {}
+
+  output_dir: "./outputs/ttrl"
+  embedding_dim: 768
+  max_steps: null
+  start_update_worker: true
+  snapshot_interval_steps: 100
+  snapshot_interval_seconds: 3600
+
+  generation:
+    decode_argmax: true

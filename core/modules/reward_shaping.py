@@ -49,6 +49,9 @@ class CuriosityRewardModule(nn.Module):
         
         self.beta = beta
         self.eta = eta
+        if device.startswith("cuda") and not torch.cuda.is_available():
+            logger.warning("CUDA requested for curiosity reward but unavailable; using CPU")
+            device = "cpu"
         self.device = device
         
         # Forward dynamics model: predicts next state given current state and action
@@ -444,7 +447,8 @@ class RewardOrchestrator:
         # Initialize sub-modules
         self.curiosity_module = CuriosityRewardModule(
             beta=config.get('curiosity_beta', 0.2),
-            eta=config.get('curiosity_eta', 0.5)
+            eta=config.get('curiosity_eta', 0.5),
+            device=config.get('device', 'cuda')
         )
         
         self.coherence_analyzer = TrajectoryCoherenceAnalyzer(

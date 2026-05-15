@@ -3,16 +3,18 @@ Experience Buffer Module
 
 Implements an intelligent experience buffer with k-NN retrieval capabilities
 for the online learning system. Includes priority-based sampling and
-efficient similarity search using FAISS.
+efficient similarity search. FAISS can be enabled explicitly for production
+deployments; the default NumPy backend is slower but avoids native-extension
+aborts in lightweight development environments.
 """
 
 import logging
+import os
 import torch
 import numpy as np
 from collections import deque
 from typing import Dict, Any, List, Optional, Tuple, Union
 from dataclasses import dataclass
-import faiss
 import pickle
 import json
 from pathlib import Path
@@ -21,6 +23,73 @@ import threading
 from ..data_structures import Experience, ExperienceStatus
 
 logger = logging.getLogger(__name__)
+
+try:
+    import faiss
+except Exception:  # pragma: no cover - depends on optional native extension
+    faiss = None
+
+
+class NumpyKnnIndex:
+    """Small in-process k-NN index with a FAISS-like interface."""
+
+    def __init__(self, embedding_dim: int, metric: str):
+        self.embedding_dim = embedding_dim
+        self.metric = metric
+        self._vectors = np.empty((0, embedding_dim), dtype=np.float32)
+        self._ids = np.empty((0,), dtype=np.int64)
+
+    @property
+    def ntotal(self) -> int:
+        return int(len(self._ids))
+
+    def add_with_ids(self, vectors: np.ndarray, ids: np.ndarray):
+        vectors = np.asarray(vectors, dtype=np.float32)
+        ids = np.asarray(ids, dtype=np.int64).reshape(-1)
+
+        if vectors.ndim == 1:
+            vectors = vectors.reshape(1, -1)
+        if vectors.shape[1] != self.embedding_dim:
+            raise ValueError(
+                f"Expected embedding dimension {self.embedding_dim}, got {vectors.shape[1]}"
+            )
+        if len(vectors) != len(ids):
+            raise ValueError("Number of vectors must match number of ids")
+
+        self._vectors = np.vstack([self._vectors, vectors])
+        self._ids = np.concatenate([self._ids, ids])
+
+    def search(self, query: np.ndarray, k: int) -> Tuple[np.ndarray, np.ndarray]:
+        query = np.asarray(query, dtype=np.float32)
+        if query.ndim == 1:
+            query = query.reshape(1, -1)
+
+        k = min(k, self.ntotal)
+        if k <= 0:
+            distances = np.empty((query.shape[0], 0), dtype=np.float32)
+            indices = np.empty((query.shape[0], 0), dtype=np.int64)
+            return distances, indices
+
+        all_distances = []
+        all_indices = []
+        for row in query:
+            if self.metric == "cosine":
+                scores = self._vectors @ row
+                order = np.argsort(-scores)[:k]
+                distances = scores[order]
+            elif self.metric == "manhattan":
+                scores = np.abs(self._vectors - row).sum(axis=1)
+                order = np.argsort(scores)[:k]
+                distances = scores[order]
+            else:
+                scores = ((self._vectors - row) ** 2).sum(axis=1)
+                order = np.argsort(scores)[:k]
+                distances = scores[order]
+
+            all_distances.append(distances.astype(np.float32))
+            all_indices.append(self._ids[order])
+
+        return np.vstack(all_distances), np.vstack(all_indices)
 
 
 class ExperienceBuffer:
@@ -65,6 +134,13 @@ class ExperienceBuffer:
         self.retention_days = retention_days
         self.enable_auto_pruning = enable_auto_pruning
         self.stop_pruning_event = threading.Event()  # Proper event for thread shutdown
+        self.use_faiss = (
+            faiss is not None
+            and (
+                os.environ.get("PIXELIS_USE_FAISS") == "1"
+                or os.environ.get("PIXELIS_RUN_FAISS_TESTS") == "1"
+            )
+        )
         
         # Core data structure - deque for automatic size management
         self.buffer = deque(maxlen=max_size)
@@ -72,7 +148,8 @@ class ExperienceBuffer:
         # Experience lookup by ID
         self.experience_dict: Dict[str, Experience] = {}
         
-        # FAISS index for k-NN search
+        # k-NN index for retrieval. FAISS is opt-in because incompatible local
+        # wheels can abort the Python process during search.
         self.index = self._create_faiss_index()
         self.index_to_id: Dict[int, str] = {}  # Maps FAISS index to experience ID
         
@@ -96,13 +173,16 @@ class ExperienceBuffer:
         
         logger.info(f"Experience buffer initialized with max_size={max_size}, retention_days={retention_days}")
     
-    def _create_faiss_index(self) -> faiss.Index:
+    def _create_faiss_index(self):
         """
-        Create FAISS index based on similarity metric.
+        Create k-NN index based on similarity metric.
         
         Returns:
-            FAISS index object
+            Index object with add_with_ids/search/ntotal.
         """
+        if not self.use_faiss:
+            return NumpyKnnIndex(self.embedding_dim, self.similarity_metric)
+
         if self.similarity_metric == "cosine":
             # Use Inner Product for cosine similarity (with L2 normalized vectors)
             index = faiss.IndexFlatIP(self.embedding_dim)
@@ -133,12 +213,13 @@ class ExperienceBuffer:
         # Load existing data if available
         self._load_from_disk()
     
-    def add(self, experience: Experience) -> bool:
+    def add(self, experience: Experience, initial_priority: Optional[float] = None) -> bool:
         """
         Add an experience to the buffer.
         
         Args:
             experience: Experience to add
+            initial_priority: Optional priority assigned before automatic scoring
             
         Returns:
             True if successfully added
@@ -150,8 +231,10 @@ class ExperienceBuffer:
                     logger.warning(f"Experience {experience.experience_id} already exists")
                     return False
                 
-                # Calculate priority if not set
-                if experience.priority == 1.0:
+                if initial_priority is not None:
+                    experience.priority = float(initial_priority)
+                elif experience.priority == 1.0:
+                    # Calculate priority if not set
                     uncertainty = 1.0 - experience.model_confidence
                     reward = experience.trajectory.total_reward
                     experience.update_priority(uncertainty, reward)
@@ -203,7 +286,9 @@ class ExperienceBuffer:
         if self.similarity_metric == "cosine":
             embedding = embedding / (np.linalg.norm(embedding) + 1e-8)
         
-        # Add to FAISS index with ID
+        embedding = np.asarray(embedding, dtype=np.float32)
+
+        # Add to search index with ID
         faiss_id = len(self.index_to_id)
         self.index.add_with_ids(embedding, np.array([faiss_id], dtype=np.int64))
         self.index_to_id[faiss_id] = experience.experience_id
@@ -231,7 +316,7 @@ class ExperienceBuffer:
                 # Fallback to random sampling if no embedding or empty index
                 return self._random_sample(k)
             
-            # Search in FAISS index
+            # Search in k-NN index
             distances, indices = self.index.search(query_embedding, min(k, self.index.ntotal))
             
             # Retrieve experiences
@@ -288,7 +373,7 @@ class ExperienceBuffer:
         if embedding is not None and self.similarity_metric == "cosine":
             embedding = embedding / (np.linalg.norm(embedding) + 1e-8)
         
-        return embedding
+        return np.asarray(embedding, dtype=np.float32) if embedding is not None else None
     
     def sample_by_priority(self, n: int = 1) -> List[Experience]:
         """
@@ -394,6 +479,10 @@ class ExperienceBuffer:
     def size(self) -> int:
         """Get current buffer size."""
         return len(self.experience_dict)
+
+    def __len__(self) -> int:
+        """Return current buffer size."""
+        return self.size()
     
     def is_full(self) -> bool:
         """Check if buffer is at maximum capacity."""
@@ -484,8 +573,8 @@ class ExperienceBuffer:
             # Atomic rename
             temp_path.rename(self.checkpoint_path)
             
-            # Save FAISS index
-            if self.index.ntotal > 0:
+            # Save FAISS index only when the native backend is explicitly enabled.
+            if self.use_faiss and self.index.ntotal > 0:
                 faiss.write_index(self.index, str(self.index_path))
             
             # Clear WAL after successful checkpoint
@@ -520,8 +609,8 @@ class ExperienceBuffer:
                 self.total_additions = checkpoint["statistics"]["total_additions"]
                 self.total_retrievals = checkpoint["statistics"]["total_retrievals"]
                 
-                # Load FAISS index
-                if self.index_path.exists():
+                # Load FAISS index when that backend is explicitly enabled.
+                if self.use_faiss and self.index_path.exists():
                     self.index = faiss.read_index(str(self.index_path))
                 
                 logger.info(f"Loaded {len(self.experience_dict)} experiences from checkpoint")
@@ -529,6 +618,9 @@ class ExperienceBuffer:
             # Apply WAL if exists
             if self.wal_path.exists():
                 self._apply_wal()
+
+            if self.experience_dict and (not self.use_faiss or self.index.ntotal == 0):
+                self._rebuild_faiss_index()
             
         except Exception as e:
             logger.error(f"Error loading from disk: {e}")
@@ -608,7 +700,7 @@ class ExperienceBuffer:
     
     def _rebuild_faiss_index(self):
         """
-        Rebuild FAISS index after pruning.
+        Rebuild the search index after pruning.
         
         This is necessary because FAISS doesn't support efficient deletion.
         """
@@ -635,6 +727,8 @@ class ExperienceBuffer:
                         if self.similarity_metric == "cosine":
                             embedding = embedding / (np.linalg.norm(embedding) + 1e-8)
                         
+                        embedding = np.asarray(embedding, dtype=np.float32)
+
                         # Add to new index
                         new_index.add_with_ids(embedding, np.array([faiss_id], dtype=np.int64))
                         new_index_to_id[faiss_id] = exp_id
@@ -644,7 +738,7 @@ class ExperienceBuffer:
             self.index = new_index
             self.index_to_id = new_index_to_id
             
-            logger.debug(f"Rebuilt FAISS index with {len(self.index_to_id)} entries")
+            logger.debug(f"Rebuilt search index with {len(self.index_to_id)} entries")
             
         except Exception as e:
             logger.error(f"Error rebuilding FAISS index: {e}")

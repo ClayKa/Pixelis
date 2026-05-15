@@ -1,12 +1,13 @@
 #!/bin/bash
-# Pixelis Reproducibility Kit - Quick Start Script
-# Run complete pipeline in ~15 minutes on consumer hardware (RTX 4090)
+# Pixelis mock/demo quick start script.
+# This creates tiny generated data and placeholder adapter files for smoke
+# validation only. It is not a production training or benchmark workflow.
 
 set -e  # Exit on error
 
 echo "=================================================="
-echo "   Pixelis Reproducibility Kit - Quick Start"
-echo "   Expected runtime: ~15 minutes on RTX 4090"
+echo "   Pixelis Mock/Demo Quick Start"
+echo "   Scope: smoke validation with toy data and placeholder adapters"
 echo "=================================================="
 echo ""
 
@@ -70,8 +71,7 @@ echo ""
 echo "Step 4: Downloading pre-trained minimal adapters..."
 if [ ! -d "checkpoints/minimal" ]; then
     mkdir -p checkpoints/minimal
-    # Note: In production, these would be downloaded from a real URL
-    # For now, we'll create placeholder files
+    # Mock/demo boundary: production runs must use real model artifacts.
     touch checkpoints/minimal/sft_adapter.bin
     touch checkpoints/minimal/rft_adapter.bin
     print_status "Pre-trained adapters ready"

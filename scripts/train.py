@@ -32,6 +32,7 @@ from core.utils.reproducibility import (
     enable_deterministic_mode,
     get_system_info,
 )
+from core.engine.ttrl_trainer import TTRLBackend
 
 # Import SFT training module
 try:
@@ -318,111 +319,22 @@ def run_rft(config: Dict[str, Any], artifact_manager: ArtifactManager):
     return str(final_model_path), metrics
 
 
-def run_ttrl(config: TrainingConfig, artifact_manager: ArtifactManager):
+def run_ttrl(config: Dict[str, Any], context: TTRLContext):
     """
     Run Test-Time Reinforcement Learning (TTRL) with specialized context.
     
     Args:
-        config: Training configuration
-        artifact_manager: Artifact manager instance
+        config: Training configuration dictionary
+        context: TTRL experiment context
     
     Returns:
         Tuple of (model_path, metrics)
     """
-    logger.info("Starting TTRL online learning...")
-    
-    # Use specialized TTRL context
-    with TTRLContext(
-        config=config,
-        name="ttrl_online",
-        experience_snapshot_interval=config.online.snapshot_interval,
-        capture_level=EnvironmentCaptureLevel.COMPLETE,
-    ) as ctx:
-        
-        # Load base model
-        model_artifact = ctx.artifact_manager.use_artifact(
-            name=config.model.artifact_name or "rft_model_final",
-            version=config.model.artifact_version or "latest",
-        )
-        logger.info(f"Using model: {model_artifact.name}:{model_artifact.version}")
-        
-        # TODO: Implement actual TTRL online learning logic
-        # This is a placeholder implementation
-        
-        import time
-        import random
-        
-        # Simulate online learning
-        experience_buffer = []
-        metrics = {}
-        
-        for step in range(config.online.num_steps):
-            # Simulate experience
-            time.sleep(0.05)
-            
-            experience = {
-                "step": step + 1,
-                "input": f"query_{step}",
-                "output": f"response_{step}",
-                "reward": random.uniform(-1, 1),
-                "confidence": random.uniform(0.5, 1.0),
-            }
-            
-            experience_buffer.append(experience)
-            
-            # Log experience
-            ctx.log_experience(
-                experience_id=f"exp_{step}",
-                input_data=experience["input"],
-                output_data=experience["output"],
-                metadata={
-                    "reward": experience["reward"],
-                    "confidence": experience["confidence"],
-                },
-            )
-            
-            # Periodically log experience buffer
-            if (step + 1) % 100 == 0:
-                ctx.log_experience_buffer(experience_buffer)
-                logger.info(f"Step {step + 1}: Buffer size={len(experience_buffer)}")
-            
-            # Simulate online update
-            if experience["confidence"] > 0.85:
-                ctx.log_online_update(
-                    experience_id=f"exp_{step}",
-                    reward=experience["reward"],
-                    confidence=experience["confidence"],
-                    kl_divergence=random.uniform(0.01, 0.05),
-                )
-            
-            metrics[f"step_{step + 1}"] = experience
-        
-        # Save final model
-        model_path = Path("checkpoints") / "ttrl_model.pt"
-        model_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(model_path, "w") as f:
-            f.write("# Placeholder TTRL model file\n")
-        
-        # Log final model
-        final_model = ctx.log_artifact(
-            name="ttrl_model_final",
-            type=ArtifactType.MODEL,
-            file_path=model_path,
-            metadata={
-                "training_config": config.to_dict(),
-                "base_model": f"{model_artifact.name}:{model_artifact.version}",
-                "total_experiences": len(experience_buffer),
-                "total_updates": ctx.update_count,
-            },
-        )
-        
-        logger.info(
-            f"✓ TTRL online learning complete. "
-            f"Model saved: {final_model.name}:{final_model.version}"
-        )
-        
-        return str(model_path), metrics
+    logger.info("Starting TTRL online training backend...")
+    backend = TTRLBackend(config)
+    model_path, metrics = backend.run(context)
+    logger.info(f"✓ TTRL online training complete. Model artifact path: {model_path}")
+    return model_path, metrics
 
 
 def main():
@@ -543,9 +455,9 @@ def main():
             model_config = yaml.safe_load(f)
             config_dict.update(model_config)
     
-    # For compatibility with reproducibility framework, create a TrainingConfig instance
-    # but use the dictionary for actual training
-    config = TrainingConfig()
+    # Keep a schema instance for the reproducibility context, while the concrete
+    # training functions consume the merged YAML dictionary.
+    context_config = TrainingConfig()
     
     # Set offline mode
     if args.offline:
@@ -554,15 +466,23 @@ def main():
     # Create experiment context
     capture_level = EnvironmentCaptureLevel(args.capture_level)
     
-    with ExperimentContext(
-        config=config,
-        name=args.exp_name or f"{args.mode}_experiment",
-        project=args.project,
-        tags=args.tags or [args.mode],
-        capture_level=capture_level,
-        monitor_hardware=not args.no_monitor,
-        offline_mode=args.offline,
-    ) as ctx:
+    context_cls = TTRLContext if args.mode == "ttrl" else ExperimentContext
+    context_kwargs = {
+        "config": context_config,
+        "name": args.exp_name or f"{args.mode}_experiment",
+        "project": args.project,
+        "tags": args.tags or [args.mode],
+        "capture_level": capture_level,
+        "monitor_hardware": not args.no_monitor,
+        "offline_mode": args.offline,
+    }
+    if args.mode == "ttrl":
+        context_kwargs["experience_snapshot_interval"] = config_dict.get("ttrl", {}).get(
+            "snapshot_interval_seconds",
+            config_dict.get("online", {}).get("snapshot_interval", 3600),
+        )
+
+    with context_cls(**context_kwargs) as ctx:
         
         # Log training mode
         ctx.log_artifact(
@@ -579,7 +499,7 @@ def main():
             # Pass dictionary config for RFT
             model_path, metrics = run_rft(config_dict, ctx.artifact_manager)
         elif args.mode == "ttrl":
-            model_path, metrics = run_ttrl(config, ctx.artifact_manager)
+            model_path, metrics = run_ttrl(config_dict, ctx)
         else:
             raise ValueError(f"Unknown mode: {args.mode}")
         

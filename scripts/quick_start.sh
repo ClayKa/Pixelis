@@ -1,5 +1,7 @@
 #!/bin/bash
-# Quick start script for CoTA data generation
+# Quick start script for CoTA data generation.
+# Option 1 is a mock smoke test. Production dataset generation requires real
+# datasource paths and an API key-backed generator.
 
 echo "🚀 Pixelis CoTA Data Generation - Quick Start"
 echo "============================================"
@@ -25,7 +27,7 @@ fi
 echo ""
 echo "✅ System ready! Choose an option:"
 echo ""
-echo "1) Run a small test (10 samples, mock mode)"
+echo "1) Run a small smoke test (10 samples, mock mode)"
 echo "2) Generate real data (requires API key)"
 echo "3) View documentation"
 echo "4) Exit"

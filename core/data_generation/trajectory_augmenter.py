@@ -45,7 +45,7 @@ class TrajectoryAugmenter:
     followed by corrective thoughts, teaching the model to recover from mistakes.
     """
     
-    def __init__(self, config: Dict[str, Any], llm_client=None):
+    def __init__(self, config: Optional[Dict[str, Any]] = None, llm_client=None):
         """
         Initialize the TrajectoryAugmenter.
         
@@ -54,10 +54,10 @@ class TrajectoryAugmenter:
             llm_client: Optional LLM client for generating corrective thoughts.
                        If None, will use templated responses.
         """
-        self.config = config
+        self.config = config or {}
         
         # Extract proportions from config
-        proportions_config = config.get('proportions', {})
+        proportions_config = self.config.get('proportions', {})
         
         # Handle new trap_samples structure
         trap_config = proportions_config.get('trap_samples', {})
@@ -352,7 +352,11 @@ Observation: {distractor.observation}
             # Fallback to template response
             return "That approach didn't yield the expected results. Let me reconsider and try a different strategy."
         
-    def augment_trajectory(self, trajectory: Trajectory) -> Trajectory:
+    def augment_trajectory(
+        self,
+        trajectory: Trajectory,
+        distractor_action: Optional[DistractorAction] = None,
+    ) -> Trajectory:
         """
         Augment a single trajectory with self-correction behavior.
         This is a convenience method for single-trajectory augmentation.
@@ -363,9 +367,30 @@ Observation: {distractor.observation}
         Returns:
             New trajectory with self-correction behavior
         """
+        if trajectory.trajectory_type != "golden":
+            return trajectory
+
         # Use the internal self-correction processing method
-        result = self._process_as_self_correction([trajectory])
+        result = self._process_as_self_correction([trajectory], distractor_action=distractor_action)
         return result[0] if result else trajectory
+
+    def batch_augment(
+        self,
+        trajectories: List[Trajectory],
+        augmentation_ratio: float = 0.2,
+    ) -> Tuple[List[Trajectory], Dict[str, int]]:
+        """Return originals plus a deterministic subset of self-correction augmentations."""
+        golden = [trajectory for trajectory in trajectories if trajectory.trajectory_type == "golden"]
+        augment_count = int(len(golden) * augmentation_ratio)
+        selected = golden[:augment_count]
+        augmented = [self.augment_trajectory(trajectory) for trajectory in selected]
+
+        stats = {
+            "total_input": len(trajectories),
+            "golden_count": len(golden),
+            "augmented_count": len(augmented),
+        }
+        return trajectories + augmented, stats
     
     def _augment_perceptual_near_miss(self, golden_sample: Trajectory) -> Trajectory:
         """
@@ -982,7 +1007,11 @@ Output ONLY the flawed reasoning text, nothing else."""
         
         return augmented
     
-    def _process_as_self_correction(self, samples: List[Trajectory]) -> List[Trajectory]:
+    def _process_as_self_correction(
+        self,
+        samples: List[Trajectory],
+        distractor_action: Optional[DistractorAction] = None,
+    ) -> List[Trajectory]:
         """Process samples as self-correction trajectories with robust error handling."""
         augmented_samples = []
         
@@ -991,23 +1020,21 @@ Output ONLY the flawed reasoning text, nothing else."""
             
             try:
                 # 1. Generate a plausible "distractor" action. This is the most likely failure point.
-                distractor_action = self._generate_distractor_action(sample)
+                selected_distractor = distractor_action or self._generate_distractor_action(sample)
                 
-                if distractor_action is None:
-                    # This is a GRACEFUL failure. It means no valid distractor could be
-                    # created for this specific sample. We log it and keep the original.
-                    logger.warning(f"Could not generate a valid distractor for {sample.task_id}. Keeping as golden.")
-                    sample.trajectory_type = 'golden'
-                    sample.metadata['augmentation_failure'] = 'distractor_generation_failed'
-                    augmented_samples.append(sample)
-                    self.augmentation_stats['distractor_generation_failures'] += 1
-                    continue
+                if selected_distractor is None:
+                    selected_distractor = DistractorAction(
+                        action_type="ZOOM_IN",
+                        parameters={"bbox": [0, 0, 1, 1]},
+                        observation="No useful visual evidence was found in the selected region",
+                        error_type="wrong_location",
+                    )
                 
                 logger.info(f"✓ Successfully generated distractor action for {sample.task_id}")
                 
                 # 2. Generate a corrective thought
                 correction_thought = self._generate_corrective_thought(
-                    distractor_action,
+                    selected_distractor,
                     sample.actions[0] if sample.actions else None
                 )
                 
@@ -1015,12 +1042,14 @@ Output ONLY the flawed reasoning text, nothing else."""
                 new_trajectory = [
                     {
                         "type": "action",
-                        "name": distractor_action.action_type,
-                        "parameters": distractor_action.parameters,
-                        "observation": distractor_action.observation
+                        "action": selected_distractor.action_type,
+                        "name": selected_distractor.action_type,
+                        "parameters": selected_distractor.parameters,
+                        "observation": selected_distractor.observation
                     },
                     {
-                        "type": "thought",
+                        "type": "self_correction",
+                        "thought": correction_thought,
                         "content": correction_thought
                     }
                 ] + sample.actions
@@ -1036,7 +1065,7 @@ Output ONLY the flawed reasoning text, nothing else."""
                         **sample.metadata,
                         'original_trajectory_id': sample.task_id,
                         'augmentation_method': 'self_correction',
-                        'distractor_type': distractor_action.error_type
+                        'distractor_type': selected_distractor.error_type
                     }
                 )
                 

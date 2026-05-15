@@ -12,6 +12,7 @@ from typing import Dict, Any, Optional, Tuple, List
 import torch
 import torch.multiprocessing as mp
 from torch.multiprocessing import Queue, Process
+from multiprocessing import shared_memory
 from dataclasses import dataclass
 import time
 import os
@@ -31,6 +32,19 @@ from ..modules.privacy import DataAnonymizer, PrivacyConfig
 # Import context management for distributed tracing
 from ..utils.context import TraceContext, TracedOperation
 
+
+_TORCH_TO_NUMPY_DTYPE = {
+    torch.float16: np.float16,
+    torch.float32: np.float32,
+    torch.float64: np.float64,
+    torch.int8: np.int8,
+    torch.int16: np.int16,
+    torch.int32: np.int32,
+    torch.int64: np.int64,
+    torch.uint8: np.uint8,
+    torch.bool: np.bool_,
+}
+
 # Shared memory management classes
 @dataclass
 class SharedMemoryInfo:
@@ -40,6 +54,7 @@ class SharedMemoryInfo:
     dtype: torch.dtype
     created_at: datetime
     size_bytes: int
+    is_shared: bool = True
     
     def age_seconds(self) -> float:
         """Get age of the shared memory segment in seconds."""
@@ -66,7 +81,7 @@ class SharedMemoryManager:
         self.pending_shm: Dict[str, SharedMemoryInfo] = {}
         self.timeout_seconds = timeout_seconds
         self.lock = threading.Lock()
-        self._shared_memory_cache: Dict[str, torch.Storage] = {}
+        self._shared_memory_cache: Dict[str, Any] = {}
         
     def create_shared_tensor(self, tensor: torch.Tensor) -> SharedMemoryInfo:
         """
@@ -78,21 +93,53 @@ class SharedMemoryManager:
         Returns:
             SharedMemoryInfo with metadata about the shared segment
         """
-        # Move tensor to CPU pinned memory for efficient transfer
+        is_real_tensor = isinstance(tensor, torch.Tensor)
+
+        # Move tensor to CPU memory for transfer. Pinned/shared memory is a
+        # performance optimization, not a correctness requirement.
         if tensor.is_cuda:
-            tensor = tensor.to('cpu', non_blocking=True).pin_memory()
-        elif not tensor.is_pinned:
-            tensor = tensor.pin_memory()
+            tensor = tensor.to('cpu', non_blocking=True)
+        if is_real_tensor:
+            tensor = tensor.detach().cpu().contiguous()
+
+        if not is_real_tensor:
+            try:
+                is_pinned_attr = getattr(tensor, "is_pinned", False)
+                is_pinned = is_pinned_attr() if callable(is_pinned_attr) else bool(is_pinned_attr)
+                if not is_pinned:
+                    tensor = tensor.pin_memory()
+            except RuntimeError as e:
+                logger.debug(f"Pinned memory unavailable; using regular CPU tensor: {e}")
         
         # Generate unique name for shared memory segment
-        import uuid
         shm_name = f"pixelis_shm_{uuid.uuid4().hex}"
         
-        # Create shared memory storage
-        storage = tensor.untyped_storage().share_memory_()
-        
-        # Cache the storage for cleanup
-        self._shared_memory_cache[shm_name] = storage
+        # Create an OS-level shared memory block that the update worker can
+        # reopen by name in a separate process.
+        is_shared = True
+        try:
+            if not isinstance(tensor, torch.Tensor):
+                raise TypeError("named shared memory requires a real torch.Tensor")
+            np_dtype = _TORCH_TO_NUMPY_DTYPE[tensor.dtype]
+            np_array = tensor.numpy()
+            shm = shared_memory.SharedMemory(
+                name=shm_name,
+                create=True,
+                size=np_array.nbytes,
+            )
+            shm_array = np.ndarray(np_array.shape, dtype=np_dtype, buffer=shm.buf)
+            shm_array[...] = np_array
+            self._shared_memory_cache[shm_name] = shm
+        except Exception as e:
+            is_shared = False
+            logger.warning(
+                "Shared memory unavailable for %s; falling back to local tensor cache: %s",
+                shm_name,
+                e,
+            )
+            self._shared_memory_cache[shm_name] = (
+                tensor.detach().cpu().clone() if isinstance(tensor, torch.Tensor) else tensor
+            )
         
         # Create metadata
         shm_info = SharedMemoryInfo(
@@ -100,7 +147,8 @@ class SharedMemoryManager:
             shape=tuple(tensor.shape),
             dtype=tensor.dtype,
             created_at=datetime.now(),
-            size_bytes=tensor.element_size() * tensor.numel()
+            size_bytes=tensor.element_size() * tensor.numel(),
+            is_shared=is_shared,
         )
         
         # Track the segment
@@ -115,25 +163,25 @@ class SharedMemoryManager:
         """
         Reconstruct a tensor from shared memory info.
         
-        NOTE: This method is intended to show the interface.
-        In production, PyTorch's built-in shared memory through
-        tensor.share_memory_() should be used with proper IPC handle passing.
-        
         Args:
             shm_info: Shared memory metadata
             
         Returns:
             Reconstructed tensor
         """
-        # Implementation note: In production, use torch's built-in shared memory:
-        # 1. Parent process: tensor.share_memory_() 
-        # 2. Pass tensor storage handle through queue
-        # 3. Child process: Reconstruct from handle
-        
-        # For now, return a placeholder tensor with correct shape/dtype
-        logger.warning(f"Using placeholder tensor reconstruction for {shm_info.name}")
-        tensor = torch.zeros(shm_info.shape, dtype=shm_info.dtype)
-        return tensor
+        cached = self._shared_memory_cache.get(shm_info.name)
+        if isinstance(cached, torch.Tensor):
+            return cached.clone()
+        if isinstance(cached, shared_memory.SharedMemory):
+            np_dtype = _TORCH_TO_NUMPY_DTYPE[shm_info.dtype]
+            array = np.ndarray(shm_info.shape, dtype=np_dtype, buffer=cached.buf)
+            return torch.from_numpy(array).clone()
+
+        logger.warning(
+            f"Unable to reconstruct shared tensor {shm_info.name}; "
+            "placeholder tensor reconstruction returned zeros because no local tensor cache is available"
+        )
+        return torch.zeros(shm_info.shape, dtype=shm_info.dtype)
     
     def mark_cleaned(self, shm_name: str):
         """
@@ -149,7 +197,7 @@ class SharedMemoryManager:
             
             # Clean up cached storage
             if shm_name in self._shared_memory_cache:
-                del self._shared_memory_cache[shm_name]
+                self._unlink_segment(shm_name)
     
     def cleanup_stale_segments(self, worker_alive: bool = True) -> List[str]:
         """
@@ -201,9 +249,10 @@ class SharedMemoryManager:
         # Clean up cached storage
         if shm_name in self._shared_memory_cache:
             try:
-                # In PyTorch, shared memory cleanup happens automatically
-                # when the storage object is deleted
-                del self._shared_memory_cache[shm_name]
+                cached = self._shared_memory_cache.pop(shm_name)
+                if isinstance(cached, shared_memory.SharedMemory):
+                    cached.close()
+                    cached.unlink()
             except Exception as e:
                 logger.error(f"Error unlinking segment {shm_name}: {e}")
     
@@ -341,6 +390,36 @@ class InferenceEngine:
             logger.warning("Inference Engine initialized in READ-ONLY MODE - no learning or updates will occur")
         
         logger.info("Inference Engine initialized with monitoring, alerting, and privacy protection")
+
+    @staticmethod
+    def _serializable_value(value: Any) -> Any:
+        """Convert small tensor/array metadata to JSON-serializable values."""
+        if isinstance(value, torch.Tensor):
+            return value.detach().cpu().tolist()
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        return value
+
+    def _extract_training_metadata(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract training fields needed by the update worker."""
+        metadata = {}
+        for key in ("input_ids", "labels", "attention_mask", "decoder_input_ids", "position_ids"):
+            if key in input_data and input_data[key] is not None:
+                metadata[key] = self._serializable_value(input_data[key])
+        return metadata
+
+    def _attach_query_embedding(self, experience: Any, input_data: Dict[str, Any]) -> None:
+        """Attach an optional retrieval embedding to an experience."""
+        embedding = input_data.get("combined_embedding")
+        if embedding is None:
+            embedding = input_data.get("embedding")
+        if embedding is None:
+            embedding = input_data.get("text_embedding")
+        if embedding is None:
+            return
+        if not isinstance(embedding, torch.Tensor):
+            embedding = torch.as_tensor(embedding, dtype=torch.float32)
+        experience.set_embedding(embedding.detach().cpu().to(dtype=torch.float32), "combined")
     
     async def infer_and_adapt(
         self,
@@ -573,8 +652,7 @@ class InferenceEngine:
         Returns:
             Model prediction dictionary
         """
-        # Implementation will depend on the specific model interface
-        # This is a placeholder
+        # The model may be a native Pixelis module or a compatibility adapter.
         return self.model.forward(input_data)
     
     def _should_trigger_update(self, confidence: float) -> bool:
@@ -722,7 +800,10 @@ class InferenceEngine:
             )
             
             # Add shared memory info to metadata
-            experience.metadata = {'shm_info': shm_info}
+            experience.metadata = {
+                'shm_info': shm_info,
+                **self._extract_training_metadata(input_data),
+            }
         else:
             # Small data can go directly through the queue
             experience = Experience(
@@ -732,6 +813,8 @@ class InferenceEngine:
                 trajectory=trajectory,  # Use the validated trajectory
                 model_confidence=voting_result.confidence
             )
+            experience.metadata.update(self._extract_training_metadata(input_data))
+        self._attach_query_embedding(experience, input_data)
         
         # Extract original logits for KL divergence calculation
         original_logits = None
@@ -739,6 +822,16 @@ class InferenceEngine:
             original_logits = initial_prediction.get('logits')
         elif hasattr(initial_prediction, 'logits'):
             original_logits = initial_prediction.logits
+
+        # In environments where torch shared memory is blocked, raw tensors
+        # cannot be placed on a torch.multiprocessing.Queue because pickling
+        # tries to promote them to shared storage. Keep the queue payload
+        # tensor-free in that mode.
+        if shm_info is not None and not getattr(shm_info, "is_shared", True):
+            if isinstance(reward_tensor, torch.Tensor):
+                reward_tensor = float(reward_tensor.detach().cpu().mean().item())
+            if isinstance(original_logits, torch.Tensor):
+                original_logits = None
         
         # Create UpdateTask with all required fields including original_logits
         update_task = UpdateTask(
@@ -785,7 +878,7 @@ class InferenceEngine:
         self.update_worker_process = mp.Process(
             target=self._run_update_worker,
             args=(self.model, self.update_queue, self.cleanup_confirmation_queue, 
-                  self.config, worker_ready),
+                  self.config, worker_ready, self.config.get('model_save_path')),
             daemon=False
         )
         
@@ -802,7 +895,7 @@ class InferenceEngine:
         self.start_watchdog()
     
     @staticmethod
-    def _run_update_worker(model, update_queue, cleanup_queue, config, ready_event=None):
+    def _run_update_worker(model, update_queue, cleanup_queue, config, ready_event=None, model_save_path=None):
         """
         Static method to run the update worker in a separate process.
         
@@ -824,7 +917,8 @@ class InferenceEngine:
             update_queue=update_queue,
             cleanup_confirmation_queue=cleanup_queue,
             config=config,
-            reward_orchestrator=reward_orchestrator
+            reward_orchestrator=reward_orchestrator,
+            model_save_path=model_save_path,
         )
         
         # Signal that worker is ready
@@ -1166,8 +1260,11 @@ class InferenceEngine:
         
         # Wait for update worker to finish
         if self.update_worker_process:
-            self.update_worker_process.join(timeout=10.0)
-            if self.update_worker_process.is_alive():
+            if getattr(self.update_worker_process, "_popen", None) is None:
+                logger.debug("Update worker process was never started; skipping join")
+            else:
+                self.update_worker_process.join(timeout=10.0)
+            if getattr(self.update_worker_process, "_popen", None) is not None and self.update_worker_process.is_alive():
                 logger.warning("Update worker didn't stop gracefully, terminating")
                 self.update_worker_process.terminate()
                 self.update_worker_process.join(timeout=5.0)
@@ -1276,6 +1373,8 @@ class InferenceEngine:
             trajectory=trajectory,  # Use the validated trajectory
             model_confidence=voting_result.confidence
         )
+        experience.metadata.update(self._extract_training_metadata(input_data))
+        self._attach_query_embedding(experience, input_data)
         
         # Extract original logits for KL divergence calculation
         original_logits = None
@@ -1356,7 +1455,7 @@ class InferenceEngine:
             input_data: Original input data
             initial_prediction: Model's initial prediction
         """
-        from ..data_structures import Experience, Trajectory
+        from ..data_structures import Experience, Trajectory, validate_trajectory
         
         try:
             # Task 002 (Phase 2 Round 6): Anonymize text data before storage
@@ -1367,7 +1466,11 @@ class InferenceEngine:
             # Create trajectory from prediction if available
             trajectory = Trajectory()
             if isinstance(initial_prediction, dict) and 'trajectory' in initial_prediction:
-                trajectory = initial_prediction['trajectory']
+                trajectory_data = initial_prediction['trajectory']
+                if isinstance(trajectory_data, Trajectory):
+                    trajectory = trajectory_data
+                elif trajectory_data:
+                    trajectory = validate_trajectory(trajectory_data)
             
             # Create experience with anonymized data
             experience = Experience(
@@ -1382,6 +1485,8 @@ class InferenceEngine:
                     '_anonymized': True
                 }
             )
+            experience.metadata.update(self._extract_training_metadata(input_data))
+            self._attach_query_embedding(experience, input_data)
             
             # Add to buffer with high initial priority (for rapid memory building)
             self.experience_buffer.add(
@@ -1408,7 +1513,7 @@ class InferenceEngine:
             voting_result: Result from voting module
             initial_prediction: Initial model prediction
         """
-        from ..data_structures import Experience, Trajectory
+        from ..data_structures import Experience, Trajectory, validate_trajectory
         
         try:
             # Task 002 (Phase 2 Round 6): Anonymize all text data before storage
@@ -1424,7 +1529,11 @@ class InferenceEngine:
             trajectory = Trajectory()
             if hasattr(voting_result, 'final_answer'):
                 if isinstance(voting_result.final_answer, dict) and 'trajectory' in voting_result.final_answer:
-                    trajectory = voting_result.final_answer['trajectory']
+                    trajectory_data = voting_result.final_answer['trajectory']
+                    if isinstance(trajectory_data, Trajectory):
+                        trajectory = trajectory_data
+                    elif trajectory_data:
+                        trajectory = validate_trajectory(trajectory_data)
             
             # Strip any image metadata if present
             image_features = input_data.get('image_features')
@@ -1445,6 +1554,8 @@ class InferenceEngine:
                     '_pii_redacted': bool(redaction_stats) if 'redaction_stats' in locals() else False
                 }
             )
+            experience.metadata.update(self._extract_training_metadata(input_data))
+            self._attach_query_embedding(experience, input_data)
             
             # Calculate priority based on confidence and uncertainty
             # Higher uncertainty = higher priority for learning
@@ -1620,8 +1731,7 @@ class InferenceEngine:
                 
                 # Get mean KL divergence from worker if available
                 if hasattr(self, 'update_worker_process') and self.update_worker_process:
-                    # This would be retrieved from shared state or worker stats
-                    # For now, use a placeholder
+                    # Worker stats are surfaced through the engine stats snapshot.
                     metrics['mean_kl_divergence'] = self.stats.get('mean_kl_divergence', 0.0)
                 
                 # Calculate inference latency percentiles

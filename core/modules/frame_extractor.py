@@ -204,9 +204,6 @@ class PyAVExtractor(FrameExtractorBase):
         try:
             stream = container.streams.video[0]
             
-            # Configure stream for better seeking
-            stream.codec_context.skip_frame = 'NONKEY'
-            
             frames_dict = {}  # Track frame_index -> frame mapping
             frame_indices_set = set(frame_indices)
             
@@ -406,8 +403,8 @@ class FrameExtractor:
             # Try backends in order of preference
             backends_to_try = [
                 (ExtractionBackend.DECORD, lambda: DecordExtractor(self.gpu_id)),
-                (ExtractionBackend.PYAV, lambda: PyAVExtractor()),
-                (ExtractionBackend.OPENCV, lambda: OpenCVExtractor())
+                (ExtractionBackend.OPENCV, lambda: OpenCVExtractor()),
+                (ExtractionBackend.PYAV, lambda: PyAVExtractor())
             ]
             
             for backend_type, initializer in backends_to_try:
